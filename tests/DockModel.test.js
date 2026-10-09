@@ -271,6 +271,7 @@ test("settings parse and serialize screen", () => {
   assert.equal(model.parseSettings('{"screen":"DP-2"}', {}).screen, "DP-2")
   assert.equal(model.parseSettings('{"screen":"  DP-2 "}', {}).screen, "DP-2")
   assert.equal(model.parseSettings('{"screen":"focused"}', {}).screen, "focused")
+  assert.equal(model.parseSettings('{"screen":" Focused "}', {}).screen, "focused")
   assert.equal(model.parseSettings('{"screen":42}', {}).screen, "")
   assert.equal(model.parseSettings('{}', {}).screen, "")
   assert.equal(model.parseSettings('', {}).screen, "")
@@ -306,6 +307,9 @@ test("settings write guard ignores matching content", () => {
   model.markSettingsWritten('{"autoHide":true}\n')
   assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), false)
   assert.equal(model.shouldReprocessSettings('{"autoHide":false}\n'), true)
+  // After an external edit is applied and marked, editing back is seen again.
+  model.markSettingsWritten('{"autoHide":false}\n')
+  assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), true)
 })
 
 test("auto-hide state machine: shouldHideDock and shouldScheduleHide require ready, engaged, suppressed", () => {

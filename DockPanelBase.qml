@@ -247,7 +247,6 @@ Item {
   }
 
   onScreenNameChanged: root.refreshDockScreen()
-  onHideSuppressedChanged: root.refreshDockScreen()
 
   Connections {
     target: Hyprland
@@ -318,6 +317,8 @@ Item {
     } else {
       maybeScheduleHide()
     }
+    // Catch up on a focus change that was ignored while the dock was busy.
+    root.refreshDockScreen()
   }
 
   onEnabledChanged: {
@@ -1465,10 +1466,15 @@ Item {
         root.autoHide = parsed.autoHide
       } else {
         if (!DockModel.shouldReprocessSettings(text())) return
+        // Remember what was applied, not only what the dock last wrote, so an
+        // edit back to an earlier value is not mistaken for our own write.
+        DockModel.markSettingsWritten(text())
         root.autoHide = parsed.autoHide
       }
-      if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
+      // Set screenName before dockSide: onDockSideChanged saves the settings
+      // and would otherwise write the previous screen back to disk.
       if (root.screenName !== parsed.screen) root.screenName = parsed.screen
+      if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
     }
@@ -1479,8 +1485,8 @@ Item {
     onLoadFailed: {
       root.settingsLoaded = true
       root.autoHide = true
-      root.dockSide = "bottom"
       root.screenName = ""
+      root.dockSide = "bottom"
     }
   }
 

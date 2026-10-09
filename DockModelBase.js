@@ -430,7 +430,9 @@ function normalizeSide(side) {
 
 // Output name ("DP-2"), "focused", or "" for the default (first screen).
 function normalizeScreen(value) {
-    return typeof value === "string" ? value.trim() : ""
+    if (typeof value !== "string") return ""
+    var name = value.trim()
+    return name.toLowerCase() === "focused" ? "focused" : name
 }
 
 // Choose the output name the dock should live on.
