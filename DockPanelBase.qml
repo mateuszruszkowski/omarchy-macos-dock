@@ -83,6 +83,7 @@ Item {
   Connections {
     target: Quickshell
     function onScreensChanged() {
+      root.refreshDockScreen()
       root.triggerRemap(false)
     }
   }
@@ -231,16 +232,33 @@ Item {
     }
   }
 
-  // Resolve screenName to a screen. Falls back to the first screen when unset
-  // or when the named output is not connected.
+  // The output the dock is on, tracked by name. Recomputed only when the
+  // setting, the connected outputs or (in "focused" mode) the focused monitor
+  // change, not on every binding evaluation. While a menu, preview or drag is
+  // open the dock stays put instead of following focus.
+  property string dockScreenName: ""
+
+  function refreshDockScreen() {
+    var names = []
+    for (var i = 0; i < Quickshell.screens.length; i++) names.push(Quickshell.screens[i].name)
+    var focused = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+    var next = DockModel.pickScreenName(names, root.screenName, focused, root.dockScreenName, root.hideSuppressed)
+    if (next !== root.dockScreenName) root.dockScreenName = next
+  }
+
+  onScreenNameChanged: root.refreshDockScreen()
+  onHideSuppressedChanged: root.refreshDockScreen()
+
+  Connections {
+    target: Hyprland
+    function onFocusedMonitorChanged() { root.refreshDockScreen() }
+  }
+
+  // The screen every dock window (dock, menu, previews, picker, Alt+Tab) uses.
   function resolveScreen() {
     var screens = Quickshell.screens
-    var want = root.screenName
-    if (want === "focused" && Hyprland.focusedMonitor) want = Hyprland.focusedMonitor.name
-    if (want) {
-      for (var i = 0; i < screens.length; i++) {
-        if (screens[i].name === want) return screens[i]
-      }
+    for (var i = 0; i < screens.length; i++) {
+      if (screens[i].name === root.dockScreenName) return screens[i]
     }
     return screens.length > 0 ? screens[0] : null
   }
@@ -1578,6 +1596,7 @@ Item {
   }
 
   Component.onCompleted: {
+    root.refreshDockScreen()
     root.checkDockConflict()
     root.refreshApps()
     root.refreshItems()
@@ -1889,6 +1908,7 @@ Item {
 
   DockMenu {
     id: dockMenu
+    screen: root.resolveScreen()
     autoHideEnabled: root.autoHide
     dockSide: root.dockSide
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
@@ -1898,6 +1918,7 @@ Item {
 
   IconPickerPanel {
     id: iconPicker
+    screen: root.resolveScreen()
     shell: root.shell
     customIcons: root.customIcons
     iconSourceFor: function(id) { return root.iconSourceFor(id) }
@@ -1990,6 +2011,7 @@ Item {
   // far above the dock surface without touching the dock's layout or model.
   WindowPreviewPanel {
     id: previewPanel
+    screen: root.resolveScreen()
     previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen
     windowList: root.previewWindows
     centerX: root.previewCenterX
@@ -2008,6 +2030,7 @@ Item {
 
   AltTabPanel {
     id: altTab
+    screen: root.resolveScreen()
     iconSourceFor: function(app) { return root.iconSourceFor(app.id) }
     onActivated: function(appId, appName) { root.activateApp(appId, appName) }
   }

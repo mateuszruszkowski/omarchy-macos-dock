@@ -433,6 +433,22 @@ function normalizeScreen(value) {
     return typeof value === "string" ? value.trim() : ""
 }
 
+// Choose the output name the dock should live on.
+//   names       connected output names, in Quickshell order
+//   want        the `screen` setting: a name, "focused", or ""
+//   focusedName name of the focused monitor ("" if unknown)
+//   currentName output the dock is on now ("" if none)
+//   frozen      true while a menu/preview/drag is open: keep the dock where
+//               it is instead of following focus out from under the user
+// Falls back to the first output when the wanted one is missing.
+function pickScreenName(names, want, focusedName, currentName, frozen) {
+    var list = names || []
+    if (frozen && currentName && list.indexOf(currentName) >= 0) return currentName
+    var target = want === "focused" ? focusedName : want
+    if (target && list.indexOf(target) >= 0) return target
+    return list.length > 0 ? list[0] : ""
+}
+
 function parseSettings(text, fallback) {
     var defaults = fallback || { autoHide: true, dockSide: "bottom" }
     var baseSide = normalizeSide(defaults.dockSide)
@@ -526,6 +542,7 @@ if (typeof module !== "undefined" && module.exports) {
         serializeSettings: serializeSettings,
         normalizeSide: normalizeSide,
         normalizeScreen: normalizeScreen,
+        pickScreenName: pickScreenName,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,

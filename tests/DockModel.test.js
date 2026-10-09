@@ -281,6 +281,26 @@ test("settings parse and serialize screen", () => {
   assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
 })
 
+test("pickScreenName chooses the dock output", () => {
+  const names = ["DP-3", "DP-2"]
+  // explicit name
+  assert.equal(model.pickScreenName(names, "DP-2", "DP-3", "", false), "DP-2")
+  // unset or unknown name falls back to the first output
+  assert.equal(model.pickScreenName(names, "", "DP-2", "", false), "DP-3")
+  assert.equal(model.pickScreenName(names, "HDMI-A-1", "DP-2", "", false), "DP-3")
+  // focused mode follows the focused monitor, or falls back when unknown
+  assert.equal(model.pickScreenName(names, "focused", "DP-2", "DP-3", false), "DP-2")
+  assert.equal(model.pickScreenName(names, "focused", "", "DP-3", false), "DP-3")
+  assert.equal(model.pickScreenName(names, "focused", "HDMI-A-1", "", false), "DP-3")
+  // frozen keeps the current output while it is still connected
+  assert.equal(model.pickScreenName(names, "focused", "DP-2", "DP-3", true), "DP-3")
+  // ...but not once it has been unplugged
+  assert.equal(model.pickScreenName(["DP-2"], "focused", "DP-2", "DP-3", true), "DP-2")
+  // no outputs
+  assert.equal(model.pickScreenName([], "DP-2", "DP-2", "DP-2", false), "")
+  assert.equal(model.pickScreenName(undefined, "", "", "", false), "")
+})
+
 test("settings write guard ignores matching content", () => {
   model.resetSettingsGuard()
   model.markSettingsWritten('{"autoHide":true}\n')
