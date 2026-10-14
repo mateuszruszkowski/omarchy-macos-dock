@@ -246,58 +246,76 @@ function hoverRamp(distance, reach) {
     return 0.5 * u + Math.sin(Math.PI * u) / (2 * Math.PI)
 }
 
+// What the pointer does to the resting row, per hover effect: a scale and a
+// sideways shift for every slot, and the width the row then takes up. A slot
+// spans slot * scale from its resting x plus the shift. "none" has no entry of
+// its own: dockMetrics gives it hoverScale 1, so the wave leaves the row alone.
+var HOVER_LAYOUTS = {
+    // Every slot within reach grows by the cosine falloff, and the ramp moves
+    // the neighbors exactly far enough to make room, so the dock grows.
+    wave: function(resting, pointer, contentWidth, opts) {
+        var reach = Math.max(opts.slotWidth, opts.radius)
+        var spread = opts.iconSize * (opts.hoverScale - 1) * (reach / opts.slotWidth)
+        var recenter = (spread * hoverRamp(-pointer, reach) + spread * hoverRamp(contentWidth - pointer, reach)) / 2
+        var grown = 0
+        var slots = resting.map(function(entry) {
+            if (entry.item.separator) return { scale: 1, shift: 0 }
+            var distance = entry.center - pointer
+            var scale = 1 + (opts.hoverScale - 1) * hoverFalloff(distance, reach)
+            grown += entry.slot * (scale - 1)
+            return { scale: scale, shift: spread * hoverRamp(distance, reach) - recenter }
+        })
+        return { slots: slots, width: contentWidth + grown }
+    },
+    // Only the slot nearest the pointer, within half a slot pitch, grows, around
+    // its own center and over its neighbors. Nothing moves and the dock keeps
+    // its length.
+    zoom: function(resting, pointer, contentWidth, opts) {
+        var target = -1
+        for (var i = 0; i < resting.length; i++) {
+            var entry = resting[i]
+            if (!entry.item.separator && Math.abs(entry.center - pointer) <= (entry.slot + opts.spacing) / 2)
+                target = i
+        }
+        var slots = resting.map(function(entry, i) {
+            var scale = i === target ? opts.hoverScale : 1
+            return { scale: scale, shift: -entry.slot * (scale - 1) / 2 }
+        })
+        return { slots: slots, width: contentWidth }
+    }
+}
+
 // Continuous layout driven by the cursor. Slot centers are measured from the
-// resting row, then every slot receives a scale and a centered shift. This is
+// resting row, then every slot receives a scale and a shift. This is
 // important: measuring each center after the previous slot has grown makes the
 // hover wave feed back into itself and causes the row to wobble at the edges.
 function computeLayout(flow, cursorX, opts) {
     opts = opts || LAYOUT_OPTS
-    var placements = {}
-    var cursorValid = typeof cursorX === "number" && cursorX >= 0
-    var reach = Math.max(opts.slotWidth, opts.radius)
-    var growth = opts.iconSize * (opts.hoverScale - 1)
-    var spread = growth * (reach / opts.slotWidth)
     var resting = []
     var x = 0
-
     for (var i = 0; i < flow.length; i++) {
         var item = flow[i]
         var slot = item.separator ? opts.separatorWidth : opts.slotWidth
         resting.push({ item: item, x: x, slot: slot, center: x + slot / 2 })
         x += slot + opts.spacing
     }
-
     var contentWidth = Math.max(0, x - opts.spacing)
-    var pointer = cursorValid ? cursorX : -1
-    var startShift = cursorValid ? spread * hoverRamp(-pointer, reach) : 0
-    var endShift = cursorValid ? spread * hoverRamp(contentWidth - pointer, reach) : 0
-    var recenter = (startShift + endShift) / 2
-    var lastEnd = 0
-    var grownWidth = 0
 
-    for (var j = 0; j < resting.length; j++) {
-        var entry = resting[j]
-        var item = entry.item
-        var scale = 1
-        var lift = 0
-        var shift = 0
-        if (cursorValid && !item.separator) {
-            var distance = entry.center - pointer
-            scale = 1 + (opts.hoverScale - 1) * hoverFalloff(distance, reach)
-            shift = spread * hoverRamp(distance, reach) - recenter
-            lift = (scale - 1) * opts.iconSize * 0.5
+    var cursorValid = typeof cursorX === "number" && cursorX >= 0
+    var layout = HOVER_LAYOUTS[opts.hoverEffect] || HOVER_LAYOUTS.wave
+    var hover = cursorValid ? layout(resting, cursorX, contentWidth, opts) : null
+    var placements = {}
+    resting.forEach(function(entry, j) {
+        var slotHover = hover ? hover.slots[j] : { scale: 1, shift: 0 }
+        placements[entry.item.id] = {
+            x: entry.x + slotHover.shift,
+            scale: slotHover.scale,
+            lift: (slotHover.scale - 1) * opts.iconSize * 0.5,
+            phantom: !!entry.item.phantom
         }
-        // The delegate itself widens around its center, so its resting x plus
-        // the wave shift is already the correct left edge. Keeping that edge
-        // stable also keeps a one-icon dock centered while it magnifies.
-        var placedX = entry.x + shift
-        placements[item.id] = { x: placedX, scale: scale, lift: lift, phantom: !!item.phantom }
-        lastEnd = Math.max(lastEnd, placedX + entry.slot * scale)
-        grownWidth += entry.slot * (scale - 1)
-    }
-
-    var expandedWidth = contentWidth + grownWidth
-    return { placements: placements, flowWidth: expandedWidth, totalWidth: expandedWidth + 2 * opts.sidePadding }
+    })
+    var flowWidth = hover ? hover.width : contentWidth
+    return { placements: placements, flowWidth: flowWidth, totalWidth: flowWidth + 2 * opts.sidePadding }
 }
 
 // Returns the flow index the cursor currently falls over (0..flow.length),
@@ -307,13 +325,14 @@ function insertionIndexFor(cursorX, flow, opts) {
     opts = opts || LAYOUT_OPTS
     if (!flow || flow.length === 0) return 0
     var x = 0
-    var cursorValid = typeof cursorX === "number" && cursorX >= 0
+    // Zoom moves nothing, so its drop slots are the resting ones.
+    var waves = typeof cursorX === "number" && cursorX >= 0 && opts.hoverEffect !== "zoom"
     for (var i = 0; i < flow.length; i++) {
         var item = flow[i]
         var slot = item.separator ? opts.separatorWidth : opts.slotWidth
         var center = x + slot / 2
         var scale = 1
-        if (cursorValid) {
+        if (waves) {
             var reach = Math.max(opts.slotWidth, opts.radius)
             scale = 1 + (opts.hoverScale - 1) * hoverFalloff(cursorX - center, reach)
         }
@@ -419,9 +438,13 @@ var DEFAULT_SETTINGS = {
     iconSize: 54,
     magnification: 1.36,
     bounce: true,
-    rightClick: "menu"
+    rightClick: "menu",
+    hoverEffect: "wave"
 }
 var RIGHT_CLICK_MODES = ["menu", "hide"]
+// "wave": the hovered icon and its neighbors grow and make room (macOS).
+// "zoom": only the hovered icon grows, in place. "none": nothing grows.
+var HOVER_EFFECTS = ["wave", "zoom", "none"]
 var ICON_SIZE_RANGE = [32, 96]
 var MAGNIFICATION_RANGE = [1, 2]
 
@@ -461,6 +484,12 @@ function settingNumber(value) {
     return NaN
 }
 
+// value trimmed and lowercased when it is one of `choices`, "" otherwise.
+function choiceSetting(value, choices) {
+    var choice = typeof value === "string" ? value.trim().toLowerCase() : ""
+    return choices.indexOf(choice) >= 0 ? choice : ""
+}
+
 function clamp(value, range) {
     return Math.min(range[1], Math.max(range[0], value))
 }
@@ -480,8 +509,10 @@ function overlaySettings(base, source) {
     if (isFinite(magnification)) out.magnification = clamp(magnification, MAGNIFICATION_RANGE)
     if (typeof source.bounce === "boolean") out.bounce = source.bounce
     else if (source.bounce === "true" || source.bounce === "false") out.bounce = source.bounce === "true"
-    var rightClick = typeof source.rightClick === "string" ? source.rightClick.trim().toLowerCase() : ""
-    if (RIGHT_CLICK_MODES.indexOf(rightClick) >= 0) out.rightClick = rightClick
+    var rightClick = choiceSetting(source.rightClick, RIGHT_CLICK_MODES)
+    if (rightClick) out.rightClick = rightClick
+    var hoverEffect = choiceSetting(source.hoverEffect, HOVER_EFFECTS)
+    if (hoverEffect) out.hoverEffect = hoverEffect
     return out
 }
 
@@ -506,7 +537,7 @@ function serializeSettings(settings) {
     var screen = normalizeScreen(settings && settings.screen)
     if (screen) out.screen = screen
     // Written only when chosen, so an unset key follows the default.
-    ;["iconSize", "magnification", "bounce", "rightClick"].forEach(function(key) {
+    ;["iconSize", "magnification", "bounce", "rightClick", "hoverEffect"].forEach(function(key) {
         if (settings && settings[key] !== DEFAULT_SETTINGS[key]) out[key] = settings[key]
     })
     return JSON.stringify(out, null, 2) + "\n"
@@ -550,18 +581,31 @@ function magnifiedOverhang(lengths, magnification, vertical) {
     return Math.max(0, Math.ceil(reach))
 }
 
+// How far a zoomed icon at either end of the dock reaches past that end. The
+// item scales about its center along the dock; on a side dock its height is
+// the length along the dock.
+function zoomedEndOverhang(lengths, vertical) {
+    var half = (vertical ? lengths.itemHeight : lengths.itemWidth) * lengths.hoverScale / 2
+    return Math.max(0, Math.ceil(half - lengths.sidePadding - lengths.slotWidth / 2))
+}
+
 // The dock's lengths for one icon size, in whole pixels, also usable as
-// computeLayout/insertionIndexFor opts. clearance is how much further the
+// computeLayout/insertionIndexFor opts. hoverScale is how much the hovered
+// icon grows, 1 for the "none" hover effect. clearance is how much further the
 // magnified icon reaches than in the stock dock: popups beside the dock move
-// out by that much, so the stock dock looks exactly as before.
-function dockMetrics(iconSize, magnification, vertical) {
+// out by that much, so the stock dock looks exactly as before. endOverhang is
+// how far a zoomed icon reaches past the dock's ends, where the wave grows the
+// dock instead.
+function dockMetrics(iconSize, magnification, vertical, hoverEffect) {
     var out = {}
     var factor = iconSize / STOCK_METRICS.iconSize
     for (var key in STOCK_METRICS) out[key] = Math.round(STOCK_METRICS[key] * factor)
-    out.hoverScale = magnification
-    out.overhang = magnifiedOverhang(out, magnification, vertical)
+    out.hoverEffect = hoverEffect || DEFAULT_SETTINGS.hoverEffect
+    out.hoverScale = out.hoverEffect === "none" ? 1 : magnification
+    out.overhang = magnifiedOverhang(out, out.hoverScale, vertical)
     var stock = magnifiedOverhang(STOCK_METRICS, DEFAULT_SETTINGS.magnification, vertical)
     out.clearance = Math.max(0, out.overhang - stock)
+    out.endOverhang = out.hoverEffect === "zoom" ? zoomedEndOverhang(out, vertical) : 0
     return out
 }
 

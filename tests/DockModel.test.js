@@ -242,10 +242,102 @@ test("insertionIndexFor picks the nearest slot", () => {
   assert.equal(model.insertionIndexFor(9999, flow, opts), 3)
 })
 
+const FOUR = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }]
+
+test("wave grows the hovered icon and its neighbors and moves them apart", () => {
+  const opts = model.dockMetrics(54, 2, false, "wave")
+  const pitch = opts.slotWidth + opts.spacing
+  const rest = model.computeLayout(FOUR, -1, opts)
+  const wave = model.computeLayout(FOUR, pitch + opts.slotWidth / 2, opts)
+  assert.equal(wave.placements.b.scale, 2)
+  assert.ok(wave.placements.c.scale > 1, "the neighbor grows too")
+  assert.ok(wave.placements.c.x > rest.placements.c.x, "the right neighbor moves right")
+  assert.ok(wave.placements.a.x < rest.placements.a.x, "the left neighbor moves left")
+  assert.ok(wave.totalWidth > rest.totalWidth, "the dock grows")
+})
+
+test("zoom grows only the icon under the pointer, in place, and the dock keeps its length", () => {
+  for (const vertical of [false, true]) {
+    const opts = model.dockMetrics(54, 2, vertical, "zoom")
+    const pitch = opts.slotWidth + opts.spacing
+    const rest = model.computeLayout(FOUR, -1, opts)
+    const zoom = model.computeLayout(FOUR, pitch + opts.slotWidth / 2 + 7, opts)
+    const b = zoom.placements.b
+    assert.equal(b.scale, 2)
+    assert.equal(b.x + opts.slotWidth * b.scale / 2, rest.placements.b.x + opts.slotWidth / 2, "b stays centered on its slot")
+    for (const id of ["a", "c", "d"])
+      assert.deepEqual(plain(zoom.placements[id]), plain(rest.placements[id]), `${id} neither moves nor grows`)
+    assert.equal(zoom.totalWidth, rest.totalWidth)
+    assert.equal(zoom.flowWidth, rest.flowWidth)
+    const wavePeak = model.computeLayout(FOUR, pitch + opts.slotWidth / 2, { ...plain(opts), hoverEffect: "wave" })
+    assert.equal(b.lift, wavePeak.placements.b.lift, "the zoomed icon lifts like the wave's peak")
+  }
+})
+
+test("zoom grows the nearer icon across a gap and nothing past the ends", () => {
+  const opts = model.dockMetrics(54, 1.36, false, "zoom")
+  const pitch = opts.slotWidth + opts.spacing
+  const grown = (x) => FOUR.map(({ id }) => id).filter((id) => model.computeLayout(FOUR, x, opts).placements[id].scale > 1)
+  const gapMiddle = pitch + opts.slotWidth + opts.spacing / 2
+  assert.deepEqual(grown(gapMiddle - 1), ["b"])
+  assert.deepEqual(grown(gapMiddle + 1), ["c"])
+  assert.deepEqual(grown(0), ["a"])
+  const end = 3 * pitch + opts.slotWidth
+  assert.deepEqual(grown(end + opts.spacing / 2 - 1), ["d"])
+  assert.deepEqual(grown(end + opts.spacing / 2 + 1), [])
+  const withSeparator = [{ id: "a" }, { id: "sep", separator: true }, { id: "b" }]
+  const overSeparator = model.computeLayout(withSeparator, pitch + opts.separatorWidth / 2, opts)
+  assert.deepEqual(plain(overSeparator), plain(model.computeLayout(withSeparator, -1, opts)), "a separator never grows")
+})
+
+test("hoverEffect none never grows or moves anything, whatever the magnification", () => {
+  for (const vertical of [false, true]) {
+    const opts = model.dockMetrics(72, 2, vertical, "none")
+    assert.equal(opts.hoverScale, 1)
+    assert.equal(opts.overhang, 0)
+    assert.equal(opts.clearance, 0)
+    assert.equal(opts.endOverhang, 0)
+    const rest = model.computeLayout(FOUR, -1, opts)
+    for (const x of [0, 40, opts.slotWidth * 1.5, 200]) {
+      assert.deepEqual(plain(model.computeLayout(FOUR, x, opts)), plain(rest), `pointer at ${x}`)
+    }
+  }
+})
+
+test("zoom overhangs the inner edge like the wave and the dock's ends by endOverhang", () => {
+  for (let size = 32; size <= 96; size += 8) {
+    for (const magnification of [1, 1.36, 2]) {
+      for (const vertical of [false, true]) {
+        const label = `iconSize ${size}, magnification ${magnification}, vertical ${vertical}`
+        const wave = model.dockMetrics(size, magnification, vertical, "wave")
+        const zoom = model.dockMetrics(size, magnification, vertical, "zoom")
+        assert.equal(zoom.overhang, wave.overhang, label)
+        assert.equal(zoom.clearance, wave.clearance, label)
+        assert.equal(wave.endOverhang, 0, label)
+        const first = model.computeLayout(FOUR, 0, zoom).placements.a
+        const center = zoom.sidePadding + first.x + zoom.slotWidth * first.scale / 2
+        const half = (vertical ? zoom.itemHeight : zoom.itemWidth) * first.scale / 2
+        const reach = half - center
+        assert.ok(reach <= zoom.endOverhang, `${label}: end reach ${reach} within ${zoom.endOverhang}`)
+        assert.ok(zoom.endOverhang < Math.max(0, reach) + 1, `${label}: endOverhang is tight`)
+      }
+    }
+  }
+})
+
+test("insertionIndexFor uses the resting slots under zoom", () => {
+  const zoom = model.dockMetrics(54, 2, false, "zoom")
+  const pitch = zoom.slotWidth + zoom.spacing
+  const bCenter = pitch + zoom.slotWidth / 2
+  assert.equal(model.insertionIndexFor(bCenter - 1, FOUR, zoom), 1)
+  assert.equal(model.insertionIndexFor(bCenter + 1, FOUR, zoom), 2)
+  assert.equal(model.insertionIndexFor(bCenter + 1, FOUR, model.dockMetrics(54, 2, false, "wave")), 1)
+})
+
 const STOCK_TABLE = {
   iconSize: 54, slotWidth: 60, spacing: 6, sidePadding: 12, separatorWidth: 12, radius: 96,
   dockHeight: 78, rowHeight: 70, rowOffset: 6, cornerRadius: 18, itemWidth: 62, itemHeight: 72,
-  bounceHeight: 28, hoverScale: 1.36,
+  bounceHeight: 28, hoverEffect: "wave", hoverScale: 1.36, endOverhang: 0,
 }
 
 test("dockMetrics at the stock icon size is the stock dock", () => {
@@ -366,8 +458,8 @@ test("settings parse and serialize screen", () => {
   assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
 })
 
-const DEFAULTS = { autoHide: true, dockSide: "bottom", screen: "", iconSize: 54, magnification: 1.36, bounce: true, rightClick: "menu" }
-const CUSTOM = { autoHide: false, dockSide: "right", screen: "DP-2", iconSize: 80, magnification: 1.75, bounce: false, rightClick: "hide" }
+const DEFAULTS = { autoHide: true, dockSide: "bottom", screen: "", iconSize: 54, magnification: 1.36, bounce: true, rightClick: "menu", hoverEffect: "wave" }
+const CUSTOM = { autoHide: false, dockSide: "right", screen: "DP-2", iconSize: 80, magnification: 1.75, bounce: false, rightClick: "hide", hoverEffect: "zoom" }
 
 test("settings default to the stock dock", () => {
   assert.deepEqual(plain(model.DEFAULT_SETTINGS), DEFAULTS)
@@ -438,6 +530,18 @@ test("settings read rightClick as menu or hide and keep the base value otherwise
   }
 })
 
+test("settings read hoverEffect as wave, zoom or none and keep the base value otherwise", () => {
+  assert.equal(model.parseSettings('{"hoverEffect":"zoom"}').hoverEffect, "zoom")
+  assert.equal(model.parseSettings('{"hoverEffect":" None "}').hoverEffect, "none")
+  assert.equal(model.parseSettings('{"hoverEffect":"wave"}', { hoverEffect: "zoom" }).hoverEffect, "wave")
+  for (const base of ["wave", "zoom", "none"]) {
+    for (const bad of [null, true, 1, "", "magnify", ["zoom"], {}]) {
+      const parsed = model.parseSettings(JSON.stringify({ hoverEffect: bad }), { hoverEffect: base })
+      assert.equal(parsed.hoverEffect, base, `hoverEffect ${JSON.stringify(bad)} over ${base}`)
+    }
+  }
+})
+
 test("broken settings fall back to the normalized fallback", () => {
   assert.deepEqual(plain(model.parseSettings("not json", CUSTOM)), CUSTOM)
   assert.deepEqual(plain(model.parseSettings("", CUSTOM)), CUSTOM)
@@ -447,7 +551,7 @@ test("broken settings fall back to the normalized fallback", () => {
 
 test("settings write only the keys that differ from the defaults", () => {
   assert.deepEqual(JSON.parse(model.serializeSettings(DEFAULTS)), { version: 1, autoHide: true, dockSide: "bottom" })
-  for (const [key, value] of [["iconSize", 72], ["magnification", 1.5], ["bounce", false], ["rightClick", "hide"]]) {
+  for (const [key, value] of [["iconSize", 72], ["magnification", 1.5], ["bounce", false], ["rightClick", "hide"], ["hoverEffect", "none"]]) {
     const written = JSON.parse(model.serializeSettings({ ...DEFAULTS, [key]: value }))
     assert.deepEqual(written, { version: 1, autoHide: true, dockSide: "bottom", [key]: value }, key)
   }
