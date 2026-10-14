@@ -29,8 +29,8 @@ Item {
 
   signal dragMoved(var itemData, point position)
   signal dragFinished(var itemData, point position)
-  signal itemLeftClicked(var itemData)
-  signal itemRightClicked(var itemData, point position)
+  // button is "left", "right" or "middle"; position is in window coordinates.
+  signal itemClicked(var itemData, string button, point position)
   signal tooltipRequested(var itemData, bool visible, point center)
   signal hoverPointerChanged(var itemData, bool inside, point position)
 
@@ -136,7 +136,7 @@ Item {
   MouseArea {
     id: mouse
     anchors.fill: parent
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
 
@@ -165,13 +165,11 @@ Item {
         root.dragMoved(root.itemData, Qt.point(mouseX, mouseY))
     }
     onReleased: function(mouse) {
-      if (mouse.button === Qt.RightButton) {
-        root.itemRightClicked(root.itemData, root.mapToItem(null, mouseX, mouseY))
-      } else if (!root.isDragging) {
-        root.itemLeftClicked(root.itemData)
-      } else {
+      var button = mouse.button === Qt.RightButton ? "right" : (mouse.button === Qt.MiddleButton ? "middle" : "left")
+      if (button === "left" && root.isDragging)
         root.dragFinished(root.itemData, Qt.point(mouseX, mouseY))
-      }
+      else
+        root.itemClicked(root.itemData, button, root.mapToItem(null, mouseX, mouseY))
       root.isDragging = false
       root.leftPressed = false
     }

@@ -136,6 +136,9 @@ Item {
   property int iconSize: DockModel.DEFAULT_SETTINGS.iconSize
   property real magnification: DockModel.DEFAULT_SETTINGS.magnification
   property bool bounce: DockModel.DEFAULT_SETTINGS.bounce
+  // "menu": right-click opens the app menu. "hide": right-click hides or
+  // restores a running app. Persisted in dock-settings.json.
+  property string rightClick: DockModel.DEFAULT_SETTINGS.rightClick
   readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical)
   onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
@@ -274,7 +277,8 @@ Item {
       screen: root.screenName,
       iconSize: root.iconSize,
       magnification: root.magnification,
-      bounce: root.bounce
+      bounce: root.bounce,
+      rightClick: root.rightClick
     })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
@@ -293,6 +297,7 @@ Item {
     root.iconSize = settings.iconSize
     root.magnification = settings.magnification
     root.bounce = settings.bounce
+    root.rightClick = settings.rightClick
     if (root.dockSide !== settings.dockSide) root.dockSide = settings.dockSide
   }
 
@@ -699,7 +704,20 @@ Item {
   function notifyConflict() {
     if (conflictNotice.running) return
     conflictNotice.running = true
-    Quickshell.execDetached(["omarchy-shell", "notify", "macos.dock is disabled because rosakodu.dock is enabled"])
+    root.sendNotification("macos.dock is disabled because rosakodu.dock is enabled", "")
+  }
+
+  // The shell shows notifications sent through omarchy-notification-send;
+  // omarchy-shell has no IPC target for them.
+  function sendNotification(headline, glyph) {
+    var command = ["omarchy-notification-send"]
+    if (glyph) command.push("-g", glyph)
+    command.push(headline)
+    Quickshell.execDetached(command)
+  }
+
+  function notifyPinChange(id, pinned) {
+    root.sendNotification((pinned ? "Pinned " : "Unpinned ") + root.appNameFor(id), pinned ? "\u{f0403}" : "\u{f0404}")
   }
 
   // Omarchy 4.0.3 scopes appLibrary away from panel plugins. Keep using the
@@ -727,6 +745,21 @@ Item {
     // RUNNING in refreshItems), not here — so the motion coincides with the
     // app appearing, like the native Dock.
     root.launchApp(item.id, (entry && entry.name) || item.name)
+  }
+
+  function handleIconClick(item, button, position) {
+    var windows = root.gatherWindowsForApp(item.id)
+    var action = DockModel.iconClickAction(button, windows, root.rightClick)
+    if (action === "menu") {
+      root.openMenu(item, position)
+    } else if (action === "hide") {
+      root.hidePreview()
+      root.hideWindows(windows)
+    } else if (action === "restore") {
+      root.activateWindows(windows)
+    } else {
+      root.handleClick(item)
+    }
   }
 
   function openDownloads() {
@@ -943,7 +976,11 @@ Item {
     else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
     else if (action === "manageIcons") root.openIconManager(item)
     else if (action === "hide") { root.hideApp(item.id); dockMenu.opened = false }
-    if (action === "togglePin") { refreshItems(); savePinned() }
+    if (action === "togglePin") {
+      refreshItems()
+      savePinned()
+      root.notifyPinChange(item.id, DockModel.isPinned(root.pinnedIds, item.id))
+    }
   }
 
   function openIconPicker(appId, appName, fromManage, fromDockMenu) {
@@ -1053,6 +1090,7 @@ Item {
       // in the session order while it keeps running.
       root.pinnedIds = DockModel.removePinned(root.pinnedIds, id)
       persist = true
+      root.notifyPinChange(id, false)
     }
 
     // Restore the dragged delegate at full opacity without the 150ms fade so
@@ -1685,7 +1723,7 @@ Item {
       MouseArea {
         id: mouseArea
         anchors.fill: parent
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
         hoverEnabled: true
         onExited: {
           root.maybeScheduleHide()
@@ -1696,7 +1734,7 @@ Item {
           root.applyLayout()
         }
         onClicked: function(mouse) {
-          if (mouse.button === Qt.RightButton) root.openIconManager()
+          if (mouse.button === Qt.RightButton || mouse.button === Qt.MiddleButton) root.openIconManager()
         }
       }
     }
@@ -1816,8 +1854,7 @@ Item {
               dockSide: root.dockSide
               animationEnabled: wrapper.animating
               iconSourceOverride: root.iconSourceFor(modelData)
-              onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
-              onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+              onItemClicked: function(clickedItem, button, position) { root.handleIconClick(clickedItem, button, position) }
               onLaunchBounceFinished: root.finishLaunchBounce(modelData)
               onDragMoved: function(draggedItem, position) {
                 root.onDragMoved(draggedItem,
@@ -1931,6 +1968,7 @@ Item {
     screen: root.resolveScreen()
     autoHideEnabled: root.autoHide
     dockSide: root.dockSide
+    pinned: !!dockMenu.itemData && DockModel.isPinned(root.pinnedIds, dockMenu.itemData.id)
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false

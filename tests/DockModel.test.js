@@ -96,6 +96,17 @@ test("acceptance: pin keeps position, survives restart, unpin removes", () => {
   assert.deepEqual(Array.from(dockOrder), ["firefox", "terminal", "vscode", "spotify"])
 })
 
+test("isPinned reads the pinned list, matching ids with or without .desktop", () => {
+  assert.equal(model.isPinned(["firefox", "kitty"], "kitty"), true)
+  assert.equal(model.isPinned(["firefox"], "firefox.desktop"), true)
+  assert.equal(model.isPinned(["firefox"], "kitty"), false)
+  assert.equal(model.isPinned([], "firefox"), false)
+  assert.equal(model.isPinned(undefined, "firefox"), false)
+  const pinned = model.togglePinned(["firefox"], "kitty")
+  assert.equal(model.isPinned(pinned, "kitty"), true)
+  assert.equal(model.isPinned(model.togglePinned(pinned, "kitty"), "kitty"), false)
+})
+
 test("toggles and reorders pins", () => {
   assert.deepEqual(Array.from(model.togglePinned(["a"], "b")), ["a", "b"])
   assert.deepEqual(Array.from(model.togglePinned(["a", "b"], "a")), ["b"])
@@ -355,8 +366,8 @@ test("settings parse and serialize screen", () => {
   assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
 })
 
-const DEFAULTS = { autoHide: true, dockSide: "bottom", screen: "", iconSize: 54, magnification: 1.36, bounce: true }
-const CUSTOM = { autoHide: false, dockSide: "right", screen: "DP-2", iconSize: 80, magnification: 1.75, bounce: false }
+const DEFAULTS = { autoHide: true, dockSide: "bottom", screen: "", iconSize: 54, magnification: 1.36, bounce: true, rightClick: "menu" }
+const CUSTOM = { autoHide: false, dockSide: "right", screen: "DP-2", iconSize: 80, magnification: 1.75, bounce: false, rightClick: "hide" }
 
 test("settings default to the stock dock", () => {
   assert.deepEqual(plain(model.DEFAULT_SETTINGS), DEFAULTS)
@@ -415,6 +426,18 @@ test("settings keep the base value for a wrong type", () => {
   assert.equal(model.parseSettings('{"iconSize":true}').iconSize, 54)
 })
 
+test("settings read rightClick as menu or hide and keep the base value otherwise", () => {
+  assert.equal(model.parseSettings('{"rightClick":"hide"}').rightClick, "hide")
+  assert.equal(model.parseSettings('{"rightClick":" Hide "}').rightClick, "hide")
+  assert.equal(model.parseSettings('{"rightClick":"menu"}', { rightClick: "hide" }).rightClick, "menu")
+  for (const base of ["menu", "hide"]) {
+    for (const bad of [null, true, 1, "", "minimize", ["hide"], {}]) {
+      const parsed = model.parseSettings(JSON.stringify({ rightClick: bad }), { rightClick: base })
+      assert.equal(parsed.rightClick, base, `rightClick ${JSON.stringify(bad)} over ${base}`)
+    }
+  }
+})
+
 test("broken settings fall back to the normalized fallback", () => {
   assert.deepEqual(plain(model.parseSettings("not json", CUSTOM)), CUSTOM)
   assert.deepEqual(plain(model.parseSettings("", CUSTOM)), CUSTOM)
@@ -424,7 +447,7 @@ test("broken settings fall back to the normalized fallback", () => {
 
 test("settings write only the keys that differ from the defaults", () => {
   assert.deepEqual(JSON.parse(model.serializeSettings(DEFAULTS)), { version: 1, autoHide: true, dockSide: "bottom" })
-  for (const [key, value] of [["iconSize", 72], ["magnification", 1.5], ["bounce", false]]) {
+  for (const [key, value] of [["iconSize", 72], ["magnification", 1.5], ["bounce", false], ["rightClick", "hide"]]) {
     const written = JSON.parse(model.serializeSettings({ ...DEFAULTS, [key]: value }))
     assert.deepEqual(written, { version: 1, autoHide: true, dockSide: "bottom", [key]: value }, key)
   }
@@ -637,4 +660,38 @@ test("hidden windows stay put when the focused monitor has no regular workspace"
     assert.deepEqual(Array.from(plan.moves), [], `workspace ${workspaceId}`)
     assert.equal(plan.focus, "", `workspace ${workspaceId}`)
   }
+})
+
+const WINDOW_SETS = [[], undefined, [shown("0xaaa", "1")], [parked("0xaaa")]]
+
+test("left click activates and middle click opens the menu in either rightClick mode", () => {
+  for (const mode of ["menu", "hide"]) {
+    for (const windows of WINDOW_SETS) {
+      assert.equal(model.iconClickAction("left", windows, mode), "activate", mode)
+      assert.equal(model.iconClickAction("middle", windows, mode), "menu", mode)
+    }
+  }
+})
+
+test("in menu mode right click opens the menu whatever the windows", () => {
+  for (const windows of WINDOW_SETS) {
+    assert.equal(model.iconClickAction("right", windows, "menu"), "menu")
+  }
+  assert.equal(model.iconClickAction("right", [shown("0xaaa", "1")], model.DEFAULT_SETTINGS.rightClick), "menu")
+})
+
+test("in hide mode right click on an app without windows keeps the menu", () => {
+  assert.equal(model.iconClickAction("right", [], "hide"), "menu")
+  assert.equal(model.iconClickAction("right", undefined, "hide"), "menu")
+  assert.equal(model.iconClickAction("right", [{ address: "", workspaceName: "1" }], "hide"), "menu")
+})
+
+test("in hide mode right click hides an app with any window in view", () => {
+  assert.equal(model.iconClickAction("right", [shown("0xaaa", "1")], "hide"), "hide")
+  assert.equal(model.iconClickAction("right", [parked("0xaaa"), shown("0xbbb", "special:scratchpad")], "hide"), "hide")
+})
+
+test("in hide mode right click restores an app whose windows are all hidden", () => {
+  assert.equal(model.iconClickAction("right", [parked("0xaaa")], "hide"), "restore")
+  assert.equal(model.iconClickAction("right", [parked("0xaaa"), parked("0xbbb"), { address: "", workspaceName: "1" }], "hide"), "restore")
 })

@@ -8,6 +8,9 @@ PanelWindow {
   id: root
 
   property var itemData: null
+  // Whether itemData's app is pinned right now. itemData is the snapshot
+  // taken when the menu opened, so its own `pinned` goes stale after Pin.
+  property bool pinned: false
   property string iconSource: ""
   property bool opened: false
   property point requestedPosition: Qt.point(0, 0)
@@ -124,7 +127,7 @@ PanelWindow {
           model: {
             var actions = [
               { action: "setIcon", label: "Get Info", glyph: "✦", detail: "Change icon" },
-              { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", glyph: "⌖", detail: "Dock placement" },
+              { action: "togglePin", glyph: "⌖", detail: "Dock placement" },
               { action: "newWindow", label: "New Window", glyph: "＋", detail: "Open another" },
               { action: "manageIcons", label: "Manage Icons", glyph: "▦", detail: "Browse apps" }
             ]
@@ -152,7 +155,9 @@ PanelWindow {
               }
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: modelData.label
+                // Bound here, not in the model, so Pin/Unpin flips without
+                // rebuilding the cards under the click that flipped it.
+                text: modelData.action === "togglePin" ? (root.pinned ? "Unpin" : "Pin") : modelData.label
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
