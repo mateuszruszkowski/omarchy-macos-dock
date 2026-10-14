@@ -568,6 +568,62 @@ test("rewriting the file for one setting keeps every other custom setting", () =
   assert.deepEqual(plain(model.parseSettings(rewritten)), { ...CUSTOM, autoHide: true })
 })
 
+test("a menu setting action goes through the same validation as the file", () => {
+  const apply = (action) => plain(model.applySettingAction(DEFAULTS, action))
+  for (const [key, value] of [["autoHide", false], ["dockSide", "left"], ["screen", "DP-6"], ["screen", "focused"],
+    ["iconSize", 58], ["magnification", 1.48], ["bounce", false], ["rightClick", "hide"], ["hoverEffect", "zoom"]]) {
+    assert.deepEqual(apply(model.settingAction(key, value)), { ...DEFAULTS, [key]: value }, `${key}=${value}`)
+  }
+  assert.deepEqual(apply(model.settingAction("autoHide", true)), DEFAULTS)
+  assert.equal(apply("iconSize=500").iconSize, 96)
+  assert.equal(apply("magnification=0").magnification, 1)
+  assert.deepEqual(apply("hoverEffect=bogus"), DEFAULTS)
+  for (const action of ["togglePin", "newWindow", "setIcon", "manageIcons", "hide", "close", "", "autoHide", "=zoom", "version=2", "toString=x"])
+    assert.equal(model.applySettingAction(DEFAULTS, action), null, JSON.stringify(action))
+})
+
+test("menu steppers move the icon size 4 px and magnification 0.12 from the default, to the range ends", () => {
+  const walk = (key, from, direction) => {
+    const seen = []
+    let settings = { ...DEFAULTS, [key]: from }
+    for (let action = model.stepAction(settings, key, direction); action; action = model.stepAction(settings, key, direction)) {
+      settings = plain(model.applySettingAction(settings, action))
+      seen.push(settings[key])
+      if (seen.length > 40) assert.fail(`${key} from ${from} never reaches the end: ${seen.slice(0, 5)}`)
+    }
+    return seen
+  }
+  assert.deepEqual(walk("iconSize", 54, 1), [58, 62, 66, 70, 74, 78, 82, 86, 90, 94, 96])
+  assert.deepEqual(walk("iconSize", 54, -1), [50, 46, 42, 38, 34, 32])
+  assert.deepEqual(walk("iconSize", 96, -1).slice(0, 3), [94, 90, 86])
+  assert.deepEqual(walk("iconSize", 61, 1)[0], 62)
+  assert.deepEqual(walk("iconSize", 61, -1)[0], 58)
+  assert.deepEqual(walk("magnification", 1.36, 1), [1.48, 1.6, 1.72, 1.84, 1.96, 2])
+  assert.deepEqual(walk("magnification", 1.36, -1), [1.24, 1.12, 1])
+  assert.deepEqual(walk("magnification", 1, 1).slice(0, 3), [1.12, 1.24, 1.36])
+  assert.deepEqual(walk("magnification", 1.5, -1)[0], 1.48)
+  assert.equal(model.stepAction({ ...DEFAULTS, iconSize: 32 }, "iconSize", -1), "")
+  assert.equal(model.stepAction({ ...DEFAULTS, magnification: 2 }, "magnification", 1), "")
+})
+
+test("menu steppers show the icon size in px and magnification 1 as Off", () => {
+  assert.equal(model.settingText("iconSize", 54), "54 px")
+  assert.equal(model.settingText("magnification", 1), "Off")
+  assert.equal(model.settingText("magnification", 1.36), "1.36×")
+  assert.equal(model.settingText("magnification", 2), "2×")
+})
+
+test("the menu shows an unset or disconnected screen as the first output, where the dock is", () => {
+  const names = ["eDP-1", "DP-6"]
+  const shown = (screen) => model.shownSetting({ ...DEFAULTS, screen }, "screen", names)
+  assert.equal(shown(""), "eDP-1")
+  assert.equal(shown("HDMI-A-1"), "eDP-1")
+  assert.equal(shown("DP-6"), "DP-6")
+  assert.equal(shown("focused"), "focused")
+  assert.equal(model.shownSetting({ ...DEFAULTS, iconSize: 70 }, "iconSize", names), 70)
+  assert.equal(model.shownSetting(DEFAULTS, "autoHide", names), true)
+})
+
 test("pickScreenName chooses the dock output", () => {
   const names = ["DP-3", "DP-2"]
   // explicit name

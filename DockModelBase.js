@@ -551,6 +551,59 @@ function markSettingsWritten(content) { lastSettingsHash = hashContent(content) 
 
 function resetSettingsGuard() { lastSettingsHash = null }
 
+// ---- Dock settings in the app menu ----------------------------------------
+// A menu control is an action "key=value", applied through the same
+// validation as the file.
+function settingAction(key, value) { return key + "=" + value }
+
+// The settings after a menu action, or null when the action is not a setting.
+function applySettingAction(settings, action) {
+    var match = /^(\w+)=(.*)$/.exec(String(action || ""))
+    if (!match || !DEFAULT_SETTINGS.hasOwnProperty(match[1])) return null
+    var change = {}
+    change[match[1]] = match[2]
+    return overlaySettings(settings, change)
+}
+
+// Stepper stops: the default, every `step` from it, and both ends of the range.
+var SETTING_STEPS = { iconSize: 4, magnification: 0.12 }
+var SETTING_RANGES = { iconSize: ICON_SIZE_RANGE, magnification: MAGNIFICATION_RANGE }
+
+function settingStops(key) {
+    var step = SETTING_STEPS[key]
+    var range = SETTING_RANGES[key]
+    var start = DEFAULT_SETTINGS[key]
+    var stops = [range[0], start, range[1]]
+    for (var up = start + step; up < range[1] - 1e-9; up += step) stops.push(Math.round(up * 100) / 100)
+    for (var down = start - step; down > range[0] + 1e-9; down -= step) stops.push(Math.round(down * 100) / 100)
+    return stops.sort(function(a, b) { return a - b })
+}
+
+// The action that moves a stepper setting to the next stop up (direction 1)
+// or down (-1), or "" at the end of its range.
+function stepAction(settings, key, direction) {
+    var value = settings[key]
+    var stops = settingStops(key)
+    if (direction < 0) stops.reverse()
+    for (var i = 0; i < stops.length; i++) {
+        if (direction > 0 ? stops[i] > value + 1e-9 : stops[i] < value - 1e-9) return settingAction(key, stops[i])
+    }
+    return ""
+}
+
+function settingText(key, value) {
+    if (key === "iconSize") return value + " px"
+    return value === 1 ? "Off" : value + "×"
+}
+
+// The value the menu shows as chosen. An unset or disconnected screen shows
+// as the first output, which is where the dock is.
+function shownSetting(settings, key, screenNames) {
+    var value = settings[key]
+    if (key !== "screen" || value === "focused" || (screenNames || []).indexOf(value) >= 0) return value
+    return (screenNames || [])[0] || ""
+}
+
 // ---- Dock geometry --------------------------------------------------------
 // Every length of the dock at the stock 54px icon; dockMetrics scales them
 // all with the icon size. radius is the hover reach computeLayout reads.
@@ -734,6 +787,11 @@ if (typeof module !== "undefined" && module.exports) {
         normalizeScreen: normalizeScreen,
         pickScreenName: pickScreenName,
         dockMetrics: dockMetrics,
+        settingAction: settingAction,
+        applySettingAction: applySettingAction,
+        stepAction: stepAction,
+        settingText: settingText,
+        shownSetting: shownSetting,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,
