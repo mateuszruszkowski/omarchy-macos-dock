@@ -416,3 +416,66 @@ test("desktopIdForWindow prefers exact id over Name fallback", () => {
   assert.equal(model.desktopIdForWindow("firefox", entries), "firefox")
   assert.equal(model.desktopIdForWindow("unknown-app", entries), "unknown-app")
 })
+
+const shown = (address, workspaceName) => ({ address, workspaceName })
+const parked = (address) => ({ address, workspaceName: "special:minimized" })
+
+test("hidden state is read from the special:minimized workspace name", () => {
+  assert.equal(model.isHiddenWorkspace("special:minimized"), true)
+  assert.equal(model.isHiddenWorkspace("special:scratchpad"), false)
+  assert.equal(model.isHiddenWorkspace("3"), false)
+  assert.equal(model.isHiddenWorkspace(""), false)
+  assert.equal(model.isHiddenWorkspace(undefined), false)
+})
+
+test("hide moves every window not already hidden, silently, by address", () => {
+  const dispatches = model.hideDispatches([
+    shown("0xaaa", "1"),
+    parked("0xbbb"),
+    shown("ccc", "special:scratchpad"),
+  ])
+  assert.deepEqual(Array.from(dispatches), [
+    'hl.dsp.window.move({ window = "address:0xaaa", workspace = "special:minimized", follow = false })',
+    'hl.dsp.window.move({ window = "address:0xccc", workspace = "special:minimized", follow = false })',
+  ])
+})
+
+test("hide of an app whose windows are all hidden dispatches nothing", () => {
+  assert.deepEqual(Array.from(model.hideDispatches([parked("0xaaa"), parked("0xbbb")])), [])
+})
+
+test("activating an app with no windows returns null so the caller launches", () => {
+  assert.equal(model.activationPlan([], 1), null)
+  assert.equal(model.activationPlan([{ address: "" }], 1), null)
+})
+
+test("activating an app with a visible window focuses it and restores nothing", () => {
+  const plan = model.activationPlan([parked("0xaaa"), shown("0xbbb", "4"), parked("0xccc")], 1)
+  assert.deepEqual(Array.from(plan.moves), [])
+  assert.equal(plan.focus, "0xbbb")
+})
+
+test("activating an app whose windows are all hidden brings them all to the active workspace", () => {
+  const plan = model.activationPlan([parked("0xaaa"), parked("0xbbb")], 3)
+  assert.deepEqual(Array.from(plan.moves), [
+    'hl.dsp.window.move({ window = "address:0xaaa", workspace = "3", follow = false })',
+    'hl.dsp.window.move({ window = "address:0xbbb", workspace = "3", follow = false })',
+  ])
+  assert.equal(plan.focus, "0xaaa")
+})
+
+test("activating one hidden window from its preview restores only that window", () => {
+  const plan = model.activationPlan([parked("0xbbb")], 2)
+  assert.deepEqual(Array.from(plan.moves), [
+    'hl.dsp.window.move({ window = "address:0xbbb", workspace = "2", follow = false })',
+  ])
+  assert.equal(plan.focus, "0xbbb")
+})
+
+test("hidden windows stay put when the focused monitor has no regular workspace", () => {
+  for (const workspaceId of [-1, -98, 0, undefined]) {
+    const plan = model.activationPlan([parked("0xaaa")], workspaceId)
+    assert.deepEqual(Array.from(plan.moves), [], `workspace ${workspaceId}`)
+    assert.equal(plan.focus, "", `workspace ${workspaceId}`)
+  }
+})

@@ -507,6 +507,55 @@ function shouldRevealDock(state) {
     return !!(s.autoHide && s.enabled && s.autoHidden && !!s.edgeHovered)
 }
 
+// ---- Hide / restore (pure, testable) -------------------------------------
+// Hide parks windows on this special workspace. Whether a window is hidden is
+// read from its Hyprland workspace name every time, never stored. Windows are
+// { address, workspaceName }.
+var HIDDEN_WORKSPACE = "special:minimized"
+
+function isHiddenWorkspace(name) {
+    return String(name || "").indexOf(HIDDEN_WORKSPACE) === 0
+}
+
+function windowSelector(address) {
+    var raw = String(address || "")
+    return "address:" + (raw.indexOf("0x") === 0 ? raw : "0x" + raw)
+}
+
+// Lua dispatch (Hyprland 0.56) moving a window without focus following it.
+function moveWindowDispatch(address, workspace) {
+    return "hl.dsp.window.move({ window = \"" + windowSelector(address)
+        + "\", workspace = \"" + workspace + "\", follow = false })"
+}
+
+function hideDispatches(windows) {
+    var out = []
+    var list = windows || []
+    for (var i = 0; i < list.length; i++) {
+        if (!list[i].address || isHiddenWorkspace(list[i].workspaceName)) continue
+        out.push(moveWindowDispatch(list[i].address, HIDDEN_WORKSPACE))
+    }
+    return out
+}
+
+// What activating an app (dock click, Alt+Tab) or one preview window does.
+// A window in view wins, so an app with any visible window behaves as before.
+// Only when every window is hidden do they all come back, to workspaceId (the
+// focused monitor's active workspace). null when there is no window at all,
+// so the caller launches the app instead.
+function activationPlan(windows, workspaceId) {
+    var list = (windows || []).filter(function(w) { return !!w.address })
+    if (list.length === 0) return null
+    for (var i = 0; i < list.length; i++) {
+        if (!isHiddenWorkspace(list[i].workspaceName)) return { moves: [], focus: list[i].address }
+    }
+    if (!(workspaceId >= 1)) return { moves: [], focus: "" }
+    return {
+        moves: list.map(function(w) { return moveWindowDispatch(w.address, String(workspaceId)) }),
+        focus: list[0].address
+    }
+}
+
 // Allows the same pure module to be exercised by Node tests. QML does not
 // define `module`, so this branch is inert when imported by Quickshell.
 if (typeof module !== "undefined" && module.exports) {
@@ -550,6 +599,10 @@ if (typeof module !== "undefined" && module.exports) {
         resetSettingsGuard: resetSettingsGuard,
         shouldHideDock: shouldHideDock,
         shouldScheduleHide: shouldScheduleHide,
-        shouldRevealDock: shouldRevealDock
+        shouldRevealDock: shouldRevealDock,
+        isHiddenWorkspace: isHiddenWorkspace,
+        windowSelector: windowSelector,
+        hideDispatches: hideDispatches,
+        activationPlan: activationPlan
     }
 }
