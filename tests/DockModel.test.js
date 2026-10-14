@@ -267,11 +267,49 @@ test("settings parse and serialize dockSide", () => {
   assert.equal(model.serializeSettings({ autoHide: true, dockSide: "weird" }).includes('"dockSide": "bottom"'), true)
 })
 
+test("settings parse and serialize screen", () => {
+  assert.equal(model.parseSettings('{"screen":"DP-2"}', {}).screen, "DP-2")
+  assert.equal(model.parseSettings('{"screen":"  DP-2 "}', {}).screen, "DP-2")
+  assert.equal(model.parseSettings('{"screen":"focused"}', {}).screen, "focused")
+  assert.equal(model.parseSettings('{"screen":" Focused "}', {}).screen, "focused")
+  assert.equal(model.parseSettings('{"screen":42}', {}).screen, "")
+  assert.equal(model.parseSettings('{}', {}).screen, "")
+  assert.equal(model.parseSettings('', {}).screen, "")
+  assert.equal(model.parseSettings('not json', { screen: "DP-3" }).screen, "DP-3")
+  const s = model.serializeSettings({ autoHide: true, dockSide: "bottom", screen: "DP-2" })
+  assert.equal(JSON.parse(s).screen, "DP-2")
+  assert.equal(model.parseSettings(s, {}).screen, "DP-2")
+  assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
+})
+
+test("pickScreenName chooses the dock output", () => {
+  const names = ["DP-3", "DP-2"]
+  // explicit name
+  assert.equal(model.pickScreenName(names, "DP-2", "DP-3", "", false), "DP-2")
+  // unset or unknown name falls back to the first output
+  assert.equal(model.pickScreenName(names, "", "DP-2", "", false), "DP-3")
+  assert.equal(model.pickScreenName(names, "HDMI-A-1", "DP-2", "", false), "DP-3")
+  // focused mode follows the focused monitor, or falls back when unknown
+  assert.equal(model.pickScreenName(names, "focused", "DP-2", "DP-3", false), "DP-2")
+  assert.equal(model.pickScreenName(names, "focused", "", "DP-3", false), "DP-3")
+  assert.equal(model.pickScreenName(names, "focused", "HDMI-A-1", "", false), "DP-3")
+  // frozen keeps the current output while it is still connected
+  assert.equal(model.pickScreenName(names, "focused", "DP-2", "DP-3", true), "DP-3")
+  // ...but not once it has been unplugged
+  assert.equal(model.pickScreenName(["DP-2"], "focused", "DP-2", "DP-3", true), "DP-2")
+  // no outputs
+  assert.equal(model.pickScreenName([], "DP-2", "DP-2", "DP-2", false), "")
+  assert.equal(model.pickScreenName(undefined, "", "", "", false), "")
+})
+
 test("settings write guard ignores matching content", () => {
   model.resetSettingsGuard()
   model.markSettingsWritten('{"autoHide":true}\n')
   assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), false)
   assert.equal(model.shouldReprocessSettings('{"autoHide":false}\n'), true)
+  // After an external edit is applied and marked, editing back is seen again.
+  model.markSettingsWritten('{"autoHide":false}\n')
+  assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), true)
 })
 
 test("auto-hide state machine: shouldHideDock and shouldScheduleHide require ready, engaged, suppressed", () => {

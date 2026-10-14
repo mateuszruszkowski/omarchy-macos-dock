@@ -83,11 +83,16 @@ Item {
   Connections {
     target: Quickshell
     function onScreensChanged() {
+      root.refreshDockScreen()
       root.triggerRemap(false)
     }
   }
   // macOS-style auto-hide. Enabled by default; persisted in dock-settings.json.
   property bool autoHide: true
+  // Which monitor the dock lives on: an output name ("DP-2"), "focused" to
+  // follow the focused monitor, or "" for the first screen. Persisted in
+  // dock-settings.json.
+  property string screenName: ""
   // Dock placement: "bottom" | "left" | "right". Persisted in dock-settings.json.
   property string dockSide: "bottom"
   property bool vertical: root.dockSide !== "bottom"
@@ -227,8 +232,38 @@ Item {
     }
   }
 
+  // The output the dock is on, tracked by name. Recomputed only when the
+  // setting, the connected outputs or (in "focused" mode) the focused monitor
+  // change, not on every binding evaluation. While a menu, preview or drag is
+  // open the dock stays put instead of following focus.
+  property string dockScreenName: ""
+
+  function refreshDockScreen() {
+    var names = []
+    for (var i = 0; i < Quickshell.screens.length; i++) names.push(Quickshell.screens[i].name)
+    var focused = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+    var next = DockModel.pickScreenName(names, root.screenName, focused, root.dockScreenName, root.hideSuppressed)
+    if (next !== root.dockScreenName) root.dockScreenName = next
+  }
+
+  onScreenNameChanged: root.refreshDockScreen()
+
+  Connections {
+    target: Hyprland
+    function onFocusedMonitorChanged() { root.refreshDockScreen() }
+  }
+
+  // The screen every dock window (dock, menu, previews, picker, Alt+Tab) uses.
+  function resolveScreen() {
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) {
+      if (screens[i].name === root.dockScreenName) return screens[i]
+    }
+    return screens.length > 0 ? screens[0] : null
+  }
+
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide })
+    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide, screen: root.screenName })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -282,6 +317,8 @@ Item {
     } else {
       maybeScheduleHide()
     }
+    // Catch up on a focus change that was ignored while the dock was busy.
+    root.refreshDockScreen()
   }
 
   onEnabledChanged: {
@@ -1429,8 +1466,14 @@ Item {
         root.autoHide = parsed.autoHide
       } else {
         if (!DockModel.shouldReprocessSettings(text())) return
+        // Remember what was applied, not only what the dock last wrote, so an
+        // edit back to an earlier value is not mistaken for our own write.
+        DockModel.markSettingsWritten(text())
         root.autoHide = parsed.autoHide
       }
+      // Set screenName before dockSide: onDockSideChanged saves the settings
+      // and would otherwise write the previous screen back to disk.
+      if (root.screenName !== parsed.screen) root.screenName = parsed.screen
       if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
@@ -1442,6 +1485,7 @@ Item {
     onLoadFailed: {
       root.settingsLoaded = true
       root.autoHide = true
+      root.screenName = ""
       root.dockSide = "bottom"
     }
   }
@@ -1558,6 +1602,7 @@ Item {
   }
 
   Component.onCompleted: {
+    root.refreshDockScreen()
     root.checkDockConflict()
     root.refreshApps()
     root.refreshItems()
@@ -1608,7 +1653,7 @@ Item {
   PanelWindow {
     id: dockWindow
     visible: !root.conflictDetected && root.enabled && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Top
@@ -1869,6 +1914,7 @@ Item {
 
   DockMenu {
     id: dockMenu
+    screen: root.resolveScreen()
     autoHideEnabled: root.autoHide
     dockSide: root.dockSide
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
@@ -1878,6 +1924,7 @@ Item {
 
   IconPickerPanel {
     id: iconPicker
+    screen: root.resolveScreen()
     shell: root.shell
     customIcons: root.customIcons
     iconSourceFor: function(id) { return root.iconSourceFor(id) }
@@ -1970,6 +2017,7 @@ Item {
   // far above the dock surface without touching the dock's layout or model.
   WindowPreviewPanel {
     id: previewPanel
+    screen: root.resolveScreen()
     previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen
     windowList: root.previewWindows
     centerX: root.previewCenterX
@@ -1988,6 +2036,7 @@ Item {
 
   AltTabPanel {
     id: altTab
+    screen: root.resolveScreen()
     iconSourceFor: function(app) { return root.iconSourceFor(app.id) }
     onActivated: function(appId, appName) { root.activateApp(appId, appName) }
   }
@@ -2003,7 +2052,7 @@ Item {
   PanelWindow {
     id: dockSpacerWindow
     visible: !root.conflictDetected && root.enabled && !root.autoHide && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Background
@@ -2032,7 +2081,7 @@ Item {
   PanelWindow {
     id: edgeHotZone
     visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Top
@@ -2078,7 +2127,7 @@ Item {
   PanelWindow {
     id: dragGhostWindow
     visible: root.ghostSource !== ""
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Overlay

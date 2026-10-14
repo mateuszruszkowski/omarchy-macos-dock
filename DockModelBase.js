@@ -428,20 +428,44 @@ function normalizeSide(side) {
     return "bottom"
 }
 
+// Output name ("DP-2"), "focused", or "" for the default (first screen).
+function normalizeScreen(value) {
+    if (typeof value !== "string") return ""
+    var name = value.trim()
+    return name.toLowerCase() === "focused" ? "focused" : name
+}
+
+// Choose the output name the dock should live on.
+//   names       connected output names, in Quickshell order
+//   want        the `screen` setting: a name, "focused", or ""
+//   focusedName name of the focused monitor ("" if unknown)
+//   currentName output the dock is on now ("" if none)
+//   frozen      true while a menu/preview/drag is open: keep the dock where
+//               it is instead of following focus out from under the user
+// Falls back to the first output when the wanted one is missing.
+function pickScreenName(names, want, focusedName, currentName, frozen) {
+    var list = names || []
+    if (frozen && currentName && list.indexOf(currentName) >= 0) return currentName
+    var target = want === "focused" ? focusedName : want
+    if (target && list.indexOf(target) >= 0) return target
+    return list.length > 0 ? list[0] : ""
+}
+
 function parseSettings(text, fallback) {
     var defaults = fallback || { autoHide: true, dockSide: "bottom" }
     var baseSide = normalizeSide(defaults.dockSide)
-    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide }
+    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide, screen: normalizeScreen(defaults.screen) }
     var source = String(text || "").trim()
     if (!source) return base
     try {
         var parsed = JSON.parse(source)
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
             return base
-        var out = { autoHide: base.autoHide, dockSide: base.dockSide }
+        var out = { autoHide: base.autoHide, dockSide: base.dockSide, screen: base.screen }
         if (typeof parsed.autoHide === "boolean") out.autoHide = parsed.autoHide
         else if (typeof parsed.autoHide === "string") out.autoHide = parsed.autoHide === "true"
         if (parsed.dockSide !== undefined) out.dockSide = normalizeSide(parsed.dockSide)
+        if (parsed.screen !== undefined) out.screen = normalizeScreen(parsed.screen)
         return out
     } catch (error) {
         return base
@@ -451,7 +475,10 @@ function parseSettings(text, fallback) {
 function serializeSettings(settings) {
     var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
     var side = normalizeSide(settings && settings.dockSide)
-    return JSON.stringify({ version: 1, autoHide: value, dockSide: side }, null, 2) + "\n"
+    var out = { version: 1, autoHide: value, dockSide: side }
+    var screen = normalizeScreen(settings && settings.screen)
+    if (screen) out.screen = screen
+    return JSON.stringify(out, null, 2) + "\n"
 }
 
 function shouldReprocessSettings(content) {
@@ -516,6 +543,8 @@ if (typeof module !== "undefined" && module.exports) {
         parseSettings: parseSettings,
         serializeSettings: serializeSettings,
         normalizeSide: normalizeSide,
+        normalizeScreen: normalizeScreen,
+        pickScreenName: pickScreenName,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,
