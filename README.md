@@ -40,7 +40,8 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Left click an icon: focus the app, bring back its hidden windows, or launch
   it.
 - Right or middle click an icon: open the app menu (Get Info, Pin, New Window,
-  Manage Icons, Hide, and the dock's hiding and side options).
+  Manage Icons, Hide, and the dock's settings, see [Dock settings in the
+  menu](#dock-settings-in-the-menu)).
 - With `"rightClick": "hide"` in `dock-settings.json`, right click a running
   app to hide all its windows, and right click it again to bring them back
   once every window is hidden. Right click on an app that is not running
@@ -176,7 +177,7 @@ suppressed while a menu, icon picker, window preview, drag, or Alt+Tab HUD is
 active. Auto-hide can be toggled without restarting the shell:
 
 ```bash
-# Right- or middle-click any dock icon → "Hiding on" / "Hiding off" in the Dock row
+# Right- or middle-click any dock icon → Dock → Hiding: On / Off
 omarchy-shell -q macos.dock toggleAutoHide
 omarchy-shell -q macos.dock setAutoHide true
 omarchy-shell -q macos.dock setAutoHide false
@@ -261,6 +262,27 @@ icon CLI. Timing is baked in.
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
 | `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
 | custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
+
+### Dock settings in the menu
+
+The app menu (middle click an icon, or right click it unless `rightClick` is
+`"hide"`) ends with a **Dock** section holding every `dock-settings.json` setting,
+two to a line. A choice applies at once, goes through the same checks as an edit of
+the file, and is saved to `dock-settings.json`. The menu stays open:
+
+| Row | Controls |
+|---|---|
+| Hiding | On / Off (`autoHide`) |
+| Position | Bottom / Left / Right (`dockSide`) |
+| Screen | Focused, then one button per connected output (`screen`). With `screen` unset or naming an output that is not connected, the output the dock falls back to is shown chosen. A new output takes effect once the menu closes, so the menu does not jump to the other monitor under the pointer |
+| Right click | Menu / Hide (`rightClick`) |
+| Icon size | − and + step 4 px from 54 (58, 62, … up to 96; 50, 46, … down to 32) (`iconSize`) |
+| Magnification | − and + step 0.12 from 1.36 (1.48, 1.6, … up to 2; 1.24, 1.12, then Off at 1) (`magnification`) |
+| Hover | Wave / Zoom / None (`hoverEffect`) |
+| Bounce | On / Off (`bounce`) |
+
+A stepper's button is dimmed at the end of its range. A value set in the file
+between two steps moves to the nearest step in the direction pressed.
 
 ### IPC commands
 

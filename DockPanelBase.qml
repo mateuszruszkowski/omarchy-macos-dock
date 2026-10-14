@@ -155,6 +155,17 @@ Item {
   // "wave" | "zoom" | "none", see DockModel.HOVER_EFFECTS. Persisted in
   // dock-settings.json.
   property string hoverEffect: DockModel.DEFAULT_SETTINGS.hoverEffect
+  // Everything dock-settings.json holds, as saved and as the menu shows it.
+  readonly property var settings: ({
+    autoHide: root.autoHide,
+    dockSide: root.dockSide,
+    screen: root.screenName,
+    iconSize: root.iconSize,
+    magnification: root.magnification,
+    bounce: root.bounce,
+    rightClick: root.rightClick,
+    hoverEffect: root.hoverEffect
+  })
   readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical, root.hoverEffect)
   onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
@@ -287,16 +298,7 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({
-      autoHide: root.autoHide,
-      dockSide: root.dockSide,
-      screen: root.screenName,
-      iconSize: root.iconSize,
-      magnification: root.magnification,
-      bounce: root.bounce,
-      rightClick: root.rightClick,
-      hoverEffect: root.hoverEffect
-    })
+    var content = DockModel.serializeSettings(root.settings)
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -960,14 +962,10 @@ Item {
   }
 
   function menuAction(action, item) {
-    if (action === "toggleAutoHide") {
-      root.autoHide = !root.autoHide
+    var chosen = DockModel.applySettingAction(root.settings, action)
+    if (chosen) {
+      root.applySettings(chosen)
       root.saveSettings()
-      return
-    }
-    if (action === "setSideBottom" || action === "setSideLeft" || action === "setSideRight") {
-      var newSide = action.slice(7).toLowerCase()
-      root.dockSide = newSide
       return
     }
     // Special items: Downloads / Trash — treat menu actions as folder actions
@@ -1982,8 +1980,12 @@ Item {
   DockMenu {
     id: dockMenu
     screen: root.resolveScreen()
-    autoHideEnabled: root.autoHide
-    dockSide: root.dockSide
+    settings: root.settings
+    screenNames: {
+      var names = []
+      for (var i = 0; i < Quickshell.screens.length; i++) names.push(Quickshell.screens[i].name)
+      return names
+    }
     pinned: !!dockMenu.itemData && DockModel.isPinned(root.pinnedIds, dockMenu.itemData.id)
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
