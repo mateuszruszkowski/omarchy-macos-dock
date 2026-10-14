@@ -136,6 +136,9 @@ Item {
   property int iconSize: DockModel.DEFAULT_SETTINGS.iconSize
   property real magnification: DockModel.DEFAULT_SETTINGS.magnification
   property bool bounce: DockModel.DEFAULT_SETTINGS.bounce
+  // "menu": right-click opens the app menu. "hide": right-click hides or
+  // restores a running app. Persisted in dock-settings.json.
+  property string rightClick: DockModel.DEFAULT_SETTINGS.rightClick
   readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical)
   onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
@@ -274,7 +277,8 @@ Item {
       screen: root.screenName,
       iconSize: root.iconSize,
       magnification: root.magnification,
-      bounce: root.bounce
+      bounce: root.bounce,
+      rightClick: root.rightClick
     })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
@@ -293,6 +297,7 @@ Item {
     root.iconSize = settings.iconSize
     root.magnification = settings.magnification
     root.bounce = settings.bounce
+    root.rightClick = settings.rightClick
     if (root.dockSide !== settings.dockSide) root.dockSide = settings.dockSide
   }
 
@@ -731,7 +736,7 @@ Item {
 
   function handleIconClick(item, button, position) {
     var windows = root.gatherWindowsForApp(item.id)
-    var action = DockModel.iconClickAction(button, windows)
+    var action = DockModel.iconClickAction(button, windows, root.rightClick)
     if (action === "menu") {
       root.openMenu(item, position)
     } else if (action === "hide") {

@@ -418,8 +418,10 @@ var DEFAULT_SETTINGS = {
     screen: "",
     iconSize: 54,
     magnification: 1.36,
-    bounce: true
+    bounce: true,
+    rightClick: "menu"
 }
+var RIGHT_CLICK_MODES = ["menu", "hide"]
 var ICON_SIZE_RANGE = [32, 96]
 var MAGNIFICATION_RANGE = [1, 2]
 
@@ -478,6 +480,8 @@ function overlaySettings(base, source) {
     if (isFinite(magnification)) out.magnification = clamp(magnification, MAGNIFICATION_RANGE)
     if (typeof source.bounce === "boolean") out.bounce = source.bounce
     else if (source.bounce === "true" || source.bounce === "false") out.bounce = source.bounce === "true"
+    var rightClick = typeof source.rightClick === "string" ? source.rightClick.trim().toLowerCase() : ""
+    if (RIGHT_CLICK_MODES.indexOf(rightClick) >= 0) out.rightClick = rightClick
     return out
 }
 
@@ -502,7 +506,7 @@ function serializeSettings(settings) {
     var screen = normalizeScreen(settings && settings.screen)
     if (screen) out.screen = screen
     // Written only when chosen, so an unset key follows the default.
-    ;["iconSize", "magnification", "bounce"].forEach(function(key) {
+    ;["iconSize", "magnification", "bounce", "rightClick"].forEach(function(key) {
         if (settings && settings[key] !== DEFAULT_SETTINGS[key]) out[key] = settings[key]
     })
     return JSON.stringify(out, null, 2) + "\n"
@@ -631,11 +635,13 @@ function activationPlan(windows, workspaceId) {
 }
 
 // What clicking a dock icon with `button` ("left" | "middle" | "right") does.
-// Right-click hides a running app, or brings it back when every window is
-// already hidden; an app with no window (pinned, not running) keeps the menu.
-function iconClickAction(button, windows) {
+// Middle-click always opens the app menu, and so does right-click unless the
+// rightClick setting is "hide": then right-click hides a running app, or
+// brings it back when every window is already hidden, and an app with no
+// window (pinned, not running) keeps the menu.
+function iconClickAction(button, windows, rightClick) {
     if (button === "left") return "activate"
-    if (button === "middle") return "menu"
+    if (button === "middle" || rightClick !== "hide") return "menu"
     var list = (windows || []).filter(function(w) { return !!w.address })
     if (list.length === 0) return "menu"
     for (var i = 0; i < list.length; i++) {
