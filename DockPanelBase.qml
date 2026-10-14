@@ -704,7 +704,20 @@ Item {
   function notifyConflict() {
     if (conflictNotice.running) return
     conflictNotice.running = true
-    Quickshell.execDetached(["omarchy-shell", "notify", "macos.dock is disabled because rosakodu.dock is enabled"])
+    root.sendNotification("macos.dock is disabled because rosakodu.dock is enabled", "")
+  }
+
+  // The shell shows notifications sent through omarchy-notification-send;
+  // omarchy-shell has no IPC target for them.
+  function sendNotification(headline, glyph) {
+    var command = ["omarchy-notification-send"]
+    if (glyph) command.push("-g", glyph)
+    command.push(headline)
+    Quickshell.execDetached(command)
+  }
+
+  function notifyPinChange(id, pinned) {
+    root.sendNotification((pinned ? "Pinned " : "Unpinned ") + root.appNameFor(id), pinned ? "\u{f0403}" : "\u{f0404}")
   }
 
   // Omarchy 4.0.3 scopes appLibrary away from panel plugins. Keep using the
@@ -963,7 +976,11 @@ Item {
     else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
     else if (action === "manageIcons") root.openIconManager(item)
     else if (action === "hide") { root.hideApp(item.id); dockMenu.opened = false }
-    if (action === "togglePin") { refreshItems(); savePinned() }
+    if (action === "togglePin") {
+      refreshItems()
+      savePinned()
+      root.notifyPinChange(item.id, DockModel.isPinned(root.pinnedIds, item.id))
+    }
   }
 
   function openIconPicker(appId, appName, fromManage, fromDockMenu) {
@@ -1073,6 +1090,7 @@ Item {
       // in the session order while it keeps running.
       root.pinnedIds = DockModel.removePinned(root.pinnedIds, id)
       persist = true
+      root.notifyPinChange(id, false)
     }
 
     // Restore the dragged delegate at full opacity without the 150ms fade so

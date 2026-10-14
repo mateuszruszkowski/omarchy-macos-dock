@@ -11,7 +11,9 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
   and magnification
 - Pinned application persistence
 - Running-application indicators
-- Pin, unpin, new-window, hide, and close actions
+- Pin, unpin, new-window, hide, and close actions. Pinning or unpinning an
+  app from the dock (its menu, or dragging a pinned icon off the dock) shows a
+  "Pinned …" / "Unpinned …" notification
 - Hide: choose "Hide" in an app's menu (or right-click it with
   `"rightClick": "hide"`) to park all its windows on Hyprland's
   `special:minimized` workspace. Clicking the icon, a window preview or the app
