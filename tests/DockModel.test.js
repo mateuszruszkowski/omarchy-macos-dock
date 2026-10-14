@@ -638,3 +638,26 @@ test("hidden windows stay put when the focused monitor has no regular workspace"
     assert.equal(plan.focus, "", `workspace ${workspaceId}`)
   }
 })
+
+test("left click activates and middle click opens the menu, whatever the windows", () => {
+  for (const windows of [[], [shown("0xaaa", "1")], [parked("0xaaa")]]) {
+    assert.equal(model.iconClickAction("left", windows), "activate")
+    assert.equal(model.iconClickAction("middle", windows), "menu")
+  }
+})
+
+test("right click on an app without windows keeps the menu", () => {
+  assert.equal(model.iconClickAction("right", []), "menu")
+  assert.equal(model.iconClickAction("right", undefined), "menu")
+  assert.equal(model.iconClickAction("right", [{ address: "", workspaceName: "1" }]), "menu")
+})
+
+test("right click hides an app with any window in view", () => {
+  assert.equal(model.iconClickAction("right", [shown("0xaaa", "1")]), "hide")
+  assert.equal(model.iconClickAction("right", [parked("0xaaa"), shown("0xbbb", "special:scratchpad")]), "hide")
+})
+
+test("right click restores an app whose windows are all hidden", () => {
+  assert.equal(model.iconClickAction("right", [parked("0xaaa")]), "restore")
+  assert.equal(model.iconClickAction("right", [parked("0xaaa"), parked("0xbbb"), { address: "", workspaceName: "1" }]), "restore")
+})

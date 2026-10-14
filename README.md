@@ -12,12 +12,13 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Pinned application persistence
 - Running-application indicators
 - Pin, unpin, new-window, hide, and close actions
-- Hide: right-click a running app and choose "Hide" to park all its windows on
-  Hyprland's `special:minimized` workspace. Clicking the icon, a window preview
-  or the app in Alt+Tab brings them back to the focused monitor's workspace
+- Hide: right-click a running app (or choose "Hide" in its menu) to park all
+  its windows on Hyprland's `special:minimized` workspace. Right-clicking it
+  again, clicking the icon, a window preview or the app in Alt+Tab brings them
+  back to the focused monitor's workspace
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
-- Point-and-click icon picker: right-click any app and choose "Get Info…" to
+- Point-and-click icon picker: open any app's menu and choose "Get Info…" to
   change its icon from macOSicons, your own image, or a direct image URL — no
   terminal needed
 - "Manage Icons…" lets you assign icons to *any* installed app, even before it
@@ -30,6 +31,17 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
   persists in `~/.config/omarchy/dock-settings.json`
 - Tiling window adaptation: when auto-hide is off, it reserves its footprint
   as a Wayland exclusive zone, so tiled windows never overlap it
+
+## Mouse controls
+
+- Left click an icon: focus the app, bring back its hidden windows, or launch
+  it.
+- Middle click an icon: open the app menu (Get Info, Pin, New Window, Manage
+  Icons, Hide, and the dock's hiding and side options).
+- Right click a running app: hide all its windows. When every window is
+  already hidden, right click brings them back.
+- Right click a pinned app that is not running: open the app menu, as before.
+- Right or middle click empty dock space: open the icon manager.
 
 ## Install
 
@@ -105,13 +117,14 @@ before installing.
 
 No terminal required:
 
-- **Right-click an app on the dock → "Get Info…"** opens an icon picker with
-  suggested icons from macOSicons (searched by the app's name), a live search
-  box, and options to use your own image or a direct image URL.
-- **Right-click any app or empty dock space → "Manage Icons…"** browses every
-  installed app. You can change an icon for an app that isn't on the dock yet —
-  the icon is stored by app id, so it appears automatically the moment the app
-  opens.
+- **Middle-click an app on the dock (or right-click one that is not running)
+  → "Get Info…"** opens an icon picker with suggested icons from macOSicons
+  (searched by the app's name), a live search box, and options to use your own
+  image or a direct image URL.
+- **"Manage Icons…" in any app's menu, or a right or middle click on empty
+  dock space,** browses every installed app. You can change an icon for an app
+  that isn't on the dock yet. The icon is stored by app id, so it appears
+  automatically the moment the app opens.
 
 The picker applies changes instantly through the same helper the CLI uses
 (download, trim, rounded corners, persistence) and the dock updates live.
@@ -160,7 +173,7 @@ suppressed while a menu, icon picker, window preview, drag, or Alt+Tab HUD is
 active. Auto-hide can be toggled without restarting the shell:
 
 ```bash
-# Right-click any dock icon → Turn Hiding Off / On
+# Middle-click any dock icon → "Hiding on" / "Hiding off" in the Dock row
 omarchy-shell -q macos.dock toggleAutoHide
 omarchy-shell -q macos.dock setAutoHide true
 omarchy-shell -q macos.dock setAutoHide false

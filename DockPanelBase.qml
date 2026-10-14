@@ -729,6 +729,21 @@ Item {
     root.launchApp(item.id, (entry && entry.name) || item.name)
   }
 
+  function handleIconClick(item, button, position) {
+    var windows = root.gatherWindowsForApp(item.id)
+    var action = DockModel.iconClickAction(button, windows)
+    if (action === "menu") {
+      root.openMenu(item, position)
+    } else if (action === "hide") {
+      root.hidePreview()
+      root.hideWindows(windows)
+    } else if (action === "restore") {
+      root.activateWindows(windows)
+    } else {
+      root.handleClick(item)
+    }
+  }
+
   function openDownloads() {
     hideTimer.stop()
     Quickshell.execDetached(["xdg-open", root.downloadsPath])
@@ -1685,7 +1700,7 @@ Item {
       MouseArea {
         id: mouseArea
         anchors.fill: parent
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
         hoverEnabled: true
         onExited: {
           root.maybeScheduleHide()
@@ -1696,7 +1711,7 @@ Item {
           root.applyLayout()
         }
         onClicked: function(mouse) {
-          if (mouse.button === Qt.RightButton) root.openIconManager()
+          if (mouse.button === Qt.RightButton || mouse.button === Qt.MiddleButton) root.openIconManager()
         }
       }
     }
@@ -1816,8 +1831,7 @@ Item {
               dockSide: root.dockSide
               animationEnabled: wrapper.animating
               iconSourceOverride: root.iconSourceFor(modelData)
-              onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
-              onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+              onItemClicked: function(clickedItem, button, position) { root.handleIconClick(clickedItem, button, position) }
               onLaunchBounceFinished: root.finishLaunchBounce(modelData)
               onDragMoved: function(draggedItem, position) {
                 root.onDragMoved(draggedItem,

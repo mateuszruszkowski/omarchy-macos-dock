@@ -630,6 +630,20 @@ function activationPlan(windows, workspaceId) {
     }
 }
 
+// What clicking a dock icon with `button` ("left" | "middle" | "right") does.
+// Right-click hides a running app, or brings it back when every window is
+// already hidden; an app with no window (pinned, not running) keeps the menu.
+function iconClickAction(button, windows) {
+    if (button === "left") return "activate"
+    if (button === "middle") return "menu"
+    var list = (windows || []).filter(function(w) { return !!w.address })
+    if (list.length === 0) return "menu"
+    for (var i = 0; i < list.length; i++) {
+        if (!isHiddenWorkspace(list[i].workspaceName)) return "hide"
+    }
+    return "restore"
+}
+
 // Allows the same pure module to be exercised by Node tests. QML does not
 // define `module`, so this branch is inert when imported by Quickshell.
 if (typeof module !== "undefined" && module.exports) {
@@ -679,6 +693,7 @@ if (typeof module !== "undefined" && module.exports) {
         isHiddenWorkspace: isHiddenWorkspace,
         windowSelector: windowSelector,
         hideDispatches: hideDispatches,
-        activationPlan: activationPlan
+        activationPlan: activationPlan,
+        iconClickAction: iconClickAction
     }
 }
