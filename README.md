@@ -7,8 +7,9 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 ## Features
 
 - Glassy floating dock surface
-- Hover magnification and application tooltips, with configurable icon size
-  and magnification
+- Hover magnification and application tooltips, with configurable icon size,
+  magnification and hover effect: the macOS wave, a zoom of only the hovered
+  icon, or none
 - Pinned application persistence
 - Running-application indicators
 - Pin, unpin, new-window, hide, and close actions. Pinning or unpinning an
@@ -254,6 +255,7 @@ icon CLI. Timing is baked in.
 | `screen` | string | `""` | `dock-settings.json` | Monitor the dock (and the Alt+Tab switcher) appears on: an output name from `hyprctl monitors` such as `"DP-2"`, or `"focused"` to follow the focused monitor. Empty, or an output that is not connected, uses the first screen. |
 | `iconSize` | int | `54` | `dock-settings.json` | Icon size in pixels, from 32 to 96. The dock height, slots, spacing, padding, corner radius, hover reach and launch bounce all scale with it. A number or numeric string is rounded, then clamped to the range; anything else uses the default. Written only when it is not the default. |
 | `magnification` | number | `1.36` | `dock-settings.json` | Scale of the icon under the pointer, from 1.0 (no magnification) to 2.0. A number or numeric string is clamped to the range; anything else uses the default. Written only when it is not the default. |
+| `hoverEffect` | string | `"wave"` | `dock-settings.json` | How icons react to the pointer. `"wave"` is the macOS magnification: the hovered icon grows to `magnification`, its neighbors grow less and slide apart, and the dock lengthens. `"zoom"` grows only the hovered icon to `magnification`, in place and over its neighbors; no other icon moves and the dock keeps its length. `"none"` grows nothing, whatever `magnification` says. Any other value uses the default. Written only when it is not the default. |
 | `bounce` | bool | `true` | `dock-settings.json` | Bounce an app's icon when the app opens. Accepts `true`/`false` or the strings `"true"`/`"false"`; anything else uses the default. Written only when it is not the default. |
 | `rightClick` | string | `"menu"` | `dock-settings.json` | What right-clicking an app icon does. `"menu"` opens the app menu. `"hide"` hides every window of a running app, or brings them back when all of them are hidden; an app that is not running still opens its menu. Middle click opens the menu in both modes. Any other value uses the default. Written only when it is not the default. |
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
@@ -302,7 +304,8 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 }
 ```
 
-A dock with larger icons, stronger magnification and no launch bounce:
+A dock with larger icons, a stronger zoom of only the hovered icon and no
+launch bounce:
 
 ```json
 {
@@ -311,7 +314,8 @@ A dock with larger icons, stronger magnification and no launch bounce:
   "dockSide": "bottom",
   "iconSize": 72,
   "magnification": 1.6,
-  "bounce": false
+  "bounce": false,
+  "hoverEffect": "zoom"
 }
 ```
 

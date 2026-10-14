@@ -152,7 +152,10 @@ Item {
   // "menu": right-click opens the app menu. "hide": right-click hides or
   // restores a running app. Persisted in dock-settings.json.
   property string rightClick: DockModel.DEFAULT_SETTINGS.rightClick
-  readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical)
+  // "wave" | "zoom" | "none", see DockModel.HOVER_EFFECTS. Persisted in
+  // dock-settings.json.
+  property string hoverEffect: DockModel.DEFAULT_SETTINGS.hoverEffect
+  readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical, root.hoverEffect)
   onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
@@ -291,7 +294,8 @@ Item {
       iconSize: root.iconSize,
       magnification: root.magnification,
       bounce: root.bounce,
-      rightClick: root.rightClick
+      rightClick: root.rightClick,
+      hoverEffect: root.hoverEffect
     })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
@@ -311,6 +315,7 @@ Item {
     root.magnification = settings.magnification
     root.bounce = settings.bounce
     root.rightClick = settings.rightClick
+    root.hoverEffect = settings.hoverEffect
     if (root.dockSide !== settings.dockSide) root.dockSide = settings.dockSide
   }
 
@@ -1721,16 +1726,18 @@ Item {
     mask: Region { item: dockHitArea }
 
     // The input region: the dock surface, grown toward the screen interior by
-    // how far a magnified icon reaches past it. Only while hovered, so an idle
-    // dock leaves no dead click zone above it. Declared before dockSurface so
-    // the icons stay on top of its mouseArea.
+    // how far a magnified icon reaches past it, and past both ends by how far
+    // a zoomed end icon does. Only while hovered, so an idle dock leaves no
+    // dead click zone around it. Declared before dockSurface so the icons stay
+    // on top of its mouseArea.
     Item {
       id: dockHitArea
       readonly property real reach: root.dockHovered ? root.metrics.overhang : 0
-      x: root.dockSide === "right" ? dockSurface.x - reach : dockSurface.x
-      y: root.dockSide === "bottom" ? dockSurface.y - reach : dockSurface.y
-      width: dockSurface.width + (root.vertical ? reach : 0)
-      height: dockSurface.height + (root.vertical ? 0 : reach)
+      readonly property real endReach: root.dockHovered ? root.metrics.endOverhang : 0
+      x: (root.dockSide === "right" ? dockSurface.x - reach : dockSurface.x) - (root.vertical ? 0 : endReach)
+      y: (root.dockSide === "bottom" ? dockSurface.y - reach : dockSurface.y) - (root.vertical ? endReach : 0)
+      width: dockSurface.width + (root.vertical ? reach : 2 * endReach)
+      height: dockSurface.height + (root.vertical ? 2 * endReach : reach)
 
       MouseArea {
         id: mouseArea
@@ -1805,6 +1812,9 @@ Item {
             width: root.metrics.slotWidth * targetScale
             height: root.metrics.rowHeight
             x: 0
+            // The bigger icon paints and takes clicks on top: a zoomed icon
+            // grows over its neighbors.
+            z: targetScale
             rotation: root.vertical ? 90 : 0
             property bool animating: false
 
