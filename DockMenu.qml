@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
+import "DockModelBase.js" as DockModel
 
 PanelWindow {
   id: root
@@ -14,8 +15,25 @@ PanelWindow {
   property string iconSource: ""
   property bool opened: false
   property point requestedPosition: Qt.point(0, 0)
-  property bool autoHideEnabled: true
-  property string dockSide: "bottom"
+  // The dock's settings (DockModel.DEFAULT_SETTINGS keys) and the connected
+  // output names, for the Dock section.
+  property var settings: DockModel.DEFAULT_SETTINGS
+  property var screenNames: []
+
+  // The Dock section, two settings to a line. A row offers its options, or
+  // − value + buttons when it is a stepper.
+  readonly property var settingRows: [
+    { label: "Hiding", key: "autoHide", options: [{ label: "On", value: true }, { label: "Off", value: false }] },
+    { label: "Position", key: "dockSide", options: [{ label: "Bottom", value: "bottom" }, { label: "Left", value: "left" }, { label: "Right", value: "right" }] },
+    { label: "Screen", key: "screen", options: [{ label: "Focused", value: "focused" }].concat(root.screenNames.map(function(name) { return { label: name, value: name } })) },
+    { label: "Right click", key: "rightClick", options: [{ label: "Menu", value: "menu" }, { label: "Hide", value: "hide" }] },
+    { label: "Icon size", key: "iconSize", stepper: true },
+    { label: "Magnification", key: "magnification", stepper: true },
+    { label: "Hover", key: "hoverEffect", options: [{ label: "Wave", value: "wave" }, { label: "Zoom", value: "zoom" }, { label: "None", value: "none" }] },
+    { label: "Bounce", key: "bounce", options: [{ label: "On", value: true }, { label: "Off", value: false }] }
+    // Minimize effect (Genie / Scale / None) goes here once hiding an app
+    // animates its windows.
+  ]
 
   signal actionTriggered(string action, var itemData)
 
@@ -32,15 +50,17 @@ PanelWindow {
     x: Math.round((root.width - width) / 2)
     y: Math.round((root.height - height) / 2)
     width: 650
-    height: 370
+    height: menuContent.implicitHeight + 44
     radius: 22
     color: Util.alpha(Color.background, 0.97)
     border.color: Util.alpha(Color.foreground, 0.14)
     border.width: 1
 
     Column {
-      anchors.fill: parent
-      anchors.margins: 22
+      id: menuContent
+      x: 22
+      y: 22
+      width: parent.width - 44
       spacing: 16
 
       Item {
@@ -183,39 +203,99 @@ PanelWindow {
         }
       }
 
-      Row {
+      Rectangle { width: parent.width; height: 1; color: Util.alpha(Color.foreground, 0.10) }
+
+      Text {
+        text: "Dock"
+        color: Color.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.font.heading
+        font.bold: true
+      }
+
+      Grid {
+        id: settingsGrid
         width: parent.width
-        height: 38
-        spacing: 8
+        columns: 2
+        columnSpacing: 18
+        rowSpacing: 8
 
-        Text {
-          text: "Dock"
-          anchors.verticalCenter: parent.verticalCenter
-          color: Util.alpha(Color.foreground, 0.52)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
+        Repeater {
+          model: root.settingRows
+          delegate: Item {
+            id: settingRow
+            required property var modelData
+            readonly property var shown: DockModel.shownSetting(root.settings, modelData.key, root.screenNames)
+            width: (settingsGrid.width - settingsGrid.columnSpacing) / 2
+            height: 34
+
+            Text {
+              id: settingLabel
+              width: 96
+              anchors.verticalCenter: parent.verticalCenter
+              text: settingRow.modelData.label
+              color: Util.alpha(Color.foreground, 0.52)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Row {
+              id: settingOptions
+              visible: !settingRow.modelData.stepper
+              anchors { left: settingLabel.right; right: parent.right; top: parent.top; bottom: parent.bottom }
+              spacing: 6
+              Repeater {
+                model: settingRow.modelData.options || []
+                delegate: UtilityButton {
+                  required property var modelData
+                  width: (settingOptions.width - settingOptions.spacing * (settingRow.modelData.options.length - 1)) / settingRow.modelData.options.length
+                  label: modelData.label
+                  action: DockModel.settingAction(settingRow.modelData.key, modelData.value)
+                  selected: settingRow.shown === modelData.value
+                }
+              }
+            }
+
+            Row {
+              id: settingStepper
+              visible: !!settingRow.modelData.stepper
+              anchors { left: settingLabel.right; right: parent.right; top: parent.top; bottom: parent.bottom }
+              spacing: 6
+              UtilityButton {
+                width: 34
+                label: "−"
+                action: settingRow.modelData.stepper ? DockModel.stepAction(root.settings, settingRow.modelData.key, -1) : ""
+              }
+              Text {
+                width: settingStepper.width - 2 * 34 - 2 * settingStepper.spacing
+                height: parent.height
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                text: settingRow.modelData.stepper ? DockModel.settingText(settingRow.modelData.key, settingRow.shown) : ""
+                color: Color.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+              UtilityButton {
+                width: 34
+                label: "+"
+                action: settingRow.modelData.stepper ? DockModel.stepAction(root.settings, settingRow.modelData.key, 1) : ""
+              }
+            }
+          }
         }
-
-        UtilityButton {
-          label: root.autoHideEnabled ? "Hiding on" : "Hiding off"
-          action: "toggleAutoHide"
-          width: 104
-        }
-        UtilityButton { label: "Bottom"; action: "setSideBottom"; selected: root.dockSide === "bottom"; width: 78 }
-        UtilityButton { label: "Left"; action: "setSideLeft"; selected: root.dockSide === "left"; width: 64 }
-        UtilityButton { label: "Right"; action: "setSideRight"; selected: root.dockSide === "right"; width: 68 }
-
-        Item { width: 1; height: 1 }
-
       }
     }
   }
 
+  // An empty action is a button at the end of its range: dimmed, not clickable.
   component UtilityButton: Rectangle {
     property string label: ""
     property string action: ""
     property bool selected: false
     property bool danger: false
+    enabled: action !== ""
+    opacity: enabled ? 1 : 0.35
     height: 34
     radius: 9
     color: utilityMouse.containsMouse
@@ -225,6 +305,9 @@ PanelWindow {
     border.width: 1
     Text {
       anchors.centerIn: parent
+      width: parent.width - 8
+      horizontalAlignment: Text.AlignHCenter
+      elide: Text.ElideRight
       text: label
       color: danger ? Color.urgent : Color.foreground
       font.family: Style.font.family

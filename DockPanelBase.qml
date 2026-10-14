@@ -152,7 +152,28 @@ Item {
   // "menu": right-click opens the app menu. "hide": right-click hides or
   // restores a running app. Persisted in dock-settings.json.
   property string rightClick: DockModel.DEFAULT_SETTINGS.rightClick
-  readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical)
+  // "wave" | "zoom" | "none", see DockModel.HOVER_EFFECTS. Persisted in
+  // dock-settings.json.
+  property string hoverEffect: DockModel.DEFAULT_SETTINGS.hoverEffect
+  // Everything dock-settings.json holds. Saving reads the properties through
+  // this function, not the `settings` binding: a handler such as
+  // onDockSideChanged runs before that binding catches up and would save the
+  // previous side.
+  function currentSettings() {
+    return {
+      autoHide: root.autoHide,
+      dockSide: root.dockSide,
+      screen: root.screenName,
+      iconSize: root.iconSize,
+      magnification: root.magnification,
+      bounce: root.bounce,
+      rightClick: root.rightClick,
+      hoverEffect: root.hoverEffect
+    }
+  }
+  // The settings as the menu shows them.
+  readonly property var settings: root.currentSettings()
+  readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical, root.hoverEffect)
   onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
@@ -284,15 +305,7 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({
-      autoHide: root.autoHide,
-      dockSide: root.dockSide,
-      screen: root.screenName,
-      iconSize: root.iconSize,
-      magnification: root.magnification,
-      bounce: root.bounce,
-      rightClick: root.rightClick
-    })
+    var content = DockModel.serializeSettings(root.currentSettings())
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -311,6 +324,7 @@ Item {
     root.magnification = settings.magnification
     root.bounce = settings.bounce
     root.rightClick = settings.rightClick
+    root.hoverEffect = settings.hoverEffect
     if (root.dockSide !== settings.dockSide) root.dockSide = settings.dockSide
   }
 
@@ -572,8 +586,10 @@ Item {
     return true
   }
 
+  // The pointer along the row, negative over the padding before the first
+  // icon, NaN when the dock is not hovered.
   function cursorXInRow() {
-    if (root.hoveredMouseX < 0) return -1
+    if (root.hoveredMouseX < 0) return NaN
     // dockRow is rotated -90° for left/right docks, so hoveredMouseX (the
     // window coordinate along the dock) must be fed into the matching slot
     // for mapFromItem to resolve it to the row's x axis.
@@ -955,14 +971,10 @@ Item {
   }
 
   function menuAction(action, item) {
-    if (action === "toggleAutoHide") {
-      root.autoHide = !root.autoHide
+    var chosen = DockModel.applySettingAction(root.currentSettings(), action)
+    if (chosen) {
+      root.applySettings(chosen)
       root.saveSettings()
-      return
-    }
-    if (action === "setSideBottom" || action === "setSideLeft" || action === "setSideRight") {
-      var newSide = action.slice(7).toLowerCase()
-      root.dockSide = newSide
       return
     }
     // Special items: Downloads / Trash — treat menu actions as folder actions
@@ -1721,16 +1733,18 @@ Item {
     mask: Region { item: dockHitArea }
 
     // The input region: the dock surface, grown toward the screen interior by
-    // how far a magnified icon reaches past it. Only while hovered, so an idle
-    // dock leaves no dead click zone above it. Declared before dockSurface so
-    // the icons stay on top of its mouseArea.
+    // how far a magnified icon reaches past it, and past both ends by how far
+    // a zoomed end icon does. Only while hovered, so an idle dock leaves no
+    // dead click zone around it. Declared before dockSurface so the icons stay
+    // on top of its mouseArea.
     Item {
       id: dockHitArea
       readonly property real reach: root.dockHovered ? root.metrics.overhang : 0
-      x: root.dockSide === "right" ? dockSurface.x - reach : dockSurface.x
-      y: root.dockSide === "bottom" ? dockSurface.y - reach : dockSurface.y
-      width: dockSurface.width + (root.vertical ? reach : 0)
-      height: dockSurface.height + (root.vertical ? 0 : reach)
+      readonly property real endReach: root.dockHovered ? root.metrics.endOverhang : 0
+      x: (root.dockSide === "right" ? dockSurface.x - reach : dockSurface.x) - (root.vertical ? 0 : endReach)
+      y: (root.dockSide === "bottom" ? dockSurface.y - reach : dockSurface.y) - (root.vertical ? endReach : 0)
+      width: dockSurface.width + (root.vertical ? reach : 2 * endReach)
+      height: dockSurface.height + (root.vertical ? 2 * endReach : reach)
 
       MouseArea {
         id: mouseArea
@@ -1805,6 +1819,9 @@ Item {
             width: root.metrics.slotWidth * targetScale
             height: root.metrics.rowHeight
             x: 0
+            // The bigger icon, as drawn, paints and takes clicks on top: a
+            // zoomed icon grows over its neighbors.
+            z: dockItem.scale
             rotation: root.vertical ? 90 : 0
             property bool animating: false
 
@@ -1972,8 +1989,12 @@ Item {
   DockMenu {
     id: dockMenu
     screen: root.resolveScreen()
-    autoHideEnabled: root.autoHide
-    dockSide: root.dockSide
+    settings: root.settings
+    screenNames: {
+      var names = []
+      for (var i = 0; i < Quickshell.screens.length; i++) names.push(Quickshell.screens[i].name)
+      return names
+    }
     pinned: !!dockMenu.itemData && DockModel.isPinned(root.pinnedIds, dockMenu.itemData.id)
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
