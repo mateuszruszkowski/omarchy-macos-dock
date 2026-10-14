@@ -254,6 +254,8 @@ var HOVER_LAYOUTS = {
     // Every slot within reach grows by the cosine falloff, and the ramp moves
     // the neighbors exactly far enough to make room, so the dock grows.
     wave: function(resting, pointer, contentWidth, opts) {
+        // A pointer left of the row's start leaves the wave at rest.
+        if (pointer < 0) return null
         var reach = Math.max(opts.slotWidth, opts.radius)
         var spread = opts.iconSize * (opts.hoverScale - 1) * (reach / opts.slotWidth)
         var recenter = (spread * hoverRamp(-pointer, reach) + spread * hoverRamp(contentWidth - pointer, reach)) / 2
@@ -268,15 +270,17 @@ var HOVER_LAYOUTS = {
         return { slots: slots, width: contentWidth + grown }
     },
     // Only the slot nearest the pointer, within half a slot pitch, grows, around
-    // its own center and over its neighbors. Nothing moves and the dock keeps
-    // its length.
+    // its own center and over its neighbors. Past either end of the row the
+    // end slot grows, so the part of it that sticks out stays under the
+    // pointer. Nothing moves and the dock keeps its length.
     zoom: function(resting, pointer, contentWidth, opts) {
         var target = -1
-        for (var i = 0; i < resting.length; i++) {
-            var entry = resting[i]
-            if (!entry.item.separator && Math.abs(entry.center - pointer) <= (entry.slot + opts.spacing) / 2)
-                target = i
+        var last = resting.length - 1
+        for (var i = 0; i <= last; i++) {
+            if (Math.abs(resting[i].center - pointer) <= (resting[i].slot + opts.spacing) / 2) target = i
         }
+        if (target < 0 && last >= 0) target = pointer < resting[0].center ? 0 : (pointer > resting[last].center ? last : -1)
+        if (target >= 0 && resting[target].item.separator) target = -1
         var slots = resting.map(function(entry, i) {
             var scale = i === target ? opts.hoverScale : 1
             return { scale: scale, shift: -entry.slot * (scale - 1) / 2 }
@@ -301,7 +305,9 @@ function computeLayout(flow, cursorX, opts) {
     }
     var contentWidth = Math.max(0, x - opts.spacing)
 
-    var cursorValid = typeof cursorX === "number" && cursorX >= 0
+    // NaN (or no number) is no pointer. A negative x is the pointer left of
+    // the row, over the dock's padding.
+    var cursorValid = typeof cursorX === "number" && isFinite(cursorX)
     var layout = HOVER_LAYOUTS[opts.hoverEffect] || HOVER_LAYOUTS.wave
     var hover = cursorValid ? layout(resting, cursorX, contentWidth, opts) : null
     var placements = {}

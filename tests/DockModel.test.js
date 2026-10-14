@@ -189,6 +189,7 @@ test("orderPinned keeps only pinned members in order", () => {
 test("computeLayout rests evenly with no cursor and grows with magnification", () => {
   const opts = model.LAYOUT_OPTS
   const rest = model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], -1, opts)
+  assert.deepEqual(plain(model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], NaN, opts)), plain(rest), "NaN is no pointer")
   assert.equal(rest.totalWidth, opts.slotWidth * 3 + opts.spacing * 2 + 2 * opts.sidePadding)
   assert.deepEqual({ ...rest.placements.a }, { x: 0, scale: 1, lift: 0, phantom: false })
   assert.equal(rest.placements.b.x, opts.slotWidth + opts.spacing)
@@ -260,7 +261,7 @@ test("zoom grows only the icon under the pointer, in place, and the dock keeps i
   for (const vertical of [false, true]) {
     const opts = model.dockMetrics(54, 2, vertical, "zoom")
     const pitch = opts.slotWidth + opts.spacing
-    const rest = model.computeLayout(FOUR, -1, opts)
+    const rest = model.computeLayout(FOUR, NaN, opts)
     const zoom = model.computeLayout(FOUR, pitch + opts.slotWidth / 2 + 7, opts)
     const b = zoom.placements.b
     assert.equal(b.scale, 2)
@@ -274,7 +275,7 @@ test("zoom grows only the icon under the pointer, in place, and the dock keeps i
   }
 })
 
-test("zoom grows the nearer icon across a gap and nothing past the ends", () => {
+test("zoom grows the nearer icon across a gap and the end icon past either end", () => {
   const opts = model.dockMetrics(54, 1.36, false, "zoom")
   const pitch = opts.slotWidth + opts.spacing
   const grown = (x) => FOUR.map(({ id }) => id).filter((id) => model.computeLayout(FOUR, x, opts).placements[id].scale > 1)
@@ -284,10 +285,13 @@ test("zoom grows the nearer icon across a gap and nothing past the ends", () => 
   assert.deepEqual(grown(0), ["a"])
   const end = 3 * pitch + opts.slotWidth
   assert.deepEqual(grown(end + opts.spacing / 2 - 1), ["d"])
-  assert.deepEqual(grown(end + opts.spacing / 2 + 1), [])
+  assert.deepEqual(grown(end + opts.spacing / 2 + 1), ["d"])
+  assert.deepEqual(grown(end + opts.sidePadding + opts.endOverhang), ["d"])
+  assert.deepEqual(grown(-opts.sidePadding - opts.endOverhang), ["a"])
+  assert.deepEqual(grown(NaN), [])
   const withSeparator = [{ id: "a" }, { id: "sep", separator: true }, { id: "b" }]
   const overSeparator = model.computeLayout(withSeparator, pitch + opts.separatorWidth / 2, opts)
-  assert.deepEqual(plain(overSeparator), plain(model.computeLayout(withSeparator, -1, opts)), "a separator never grows")
+  assert.deepEqual(plain(overSeparator), plain(model.computeLayout(withSeparator, NaN, opts)), "a separator never grows")
 })
 
 test("hoverEffect none never grows or moves anything, whatever the magnification", () => {

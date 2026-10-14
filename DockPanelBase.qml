@@ -586,8 +586,10 @@ Item {
     return true
   }
 
+  // The pointer along the row, negative over the padding before the first
+  // icon, NaN when the dock is not hovered.
   function cursorXInRow() {
-    if (root.hoveredMouseX < 0) return -1
+    if (root.hoveredMouseX < 0) return NaN
     // dockRow is rotated -90° for left/right docks, so hoveredMouseX (the
     // window coordinate along the dock) must be fed into the matching slot
     // for mapFromItem to resolve it to the row's x axis.
@@ -1817,9 +1819,9 @@ Item {
             width: root.metrics.slotWidth * targetScale
             height: root.metrics.rowHeight
             x: 0
-            // The bigger icon paints and takes clicks on top: a zoomed icon
-            // grows over its neighbors.
-            z: targetScale
+            // The bigger icon, as drawn, paints and takes clicks on top: a
+            // zoomed icon grows over its neighbors.
+            z: dockItem.scale
             rotation: root.vertical ? 90 : 0
             property bool animating: false
 
