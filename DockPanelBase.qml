@@ -200,6 +200,10 @@ Item {
     function altTabNext() { root.altTabNext() }
     function altTabPrev() { root.altTabPrev() }
     function altTabCancel() { root.altTabCancel() }
+    function hideActive(): void { root.hideActiveWindow() }
+    function hideApp(appId: string): void { root.hideApp(appId) }
+    function activateApp(appId: string): void { root.activateApp(appId, "") }
+    function activateWindow(address: string): void { root.activateWindow(address) }
     function toggleAutoHide(): void { root.autoHide = !root.autoHide; root.saveSettings() }
     function setAutoHide(value: string): void {
       var v = String(value).toLowerCase()
@@ -391,47 +395,67 @@ Item {
     return raw
   }
 
-  function hyprlandWindowForItem(item) {
-    if (!item) return null
-    var fallback = null
-    try {
-      var values = Hyprland.toplevels.values
-      for (var i = 0; i < values.length; i++) {
-        var candidate = values[i]
-        var ids = []
-        if (candidate.wayland && candidate.wayland.appId) ids.push(String(candidate.wayland.appId).toLowerCase())
-        var ipc = candidate.lastIpcObject || {}
-        if (ipc.appId) ids.push(String(ipc.appId).toLowerCase())
-        if (ipc["class"]) ids.push(String(ipc["class"]).toLowerCase())
-        if (ipc.initialClass) ids.push(String(ipc.initialClass).toLowerCase())
-        for (var j = 0; j < ids.length; j++) {
-          if (ids[j] === String(item.id).toLowerCase()) return candidate
-          if (root.desktopIdForWindow({ appId: ids[j], title: candidate.title }) === item.id) {
-            if (!fallback) fallback = candidate
-          }
-        }
-      }
-    } catch (error) {}
-    return fallback
-  }
-
   function focusWindowAddress(address) {
-    if (!address) return false
+    if (!address) return
     // This Omarchy build uses Hyprland's Lua dispatcher syntax. The older
     // `workspace ...` / `focuswindow ...` strings are parsed as Lua and fail.
     // Focusing by address also switches to the window's workspace without
     // going through Toplevel.activate(), which can warp the pointer.
-    var normalized = String(address)
-    if (normalized.indexOf("0x") !== 0) normalized = "0x" + normalized
-    root.pendingFocusTarget = "address:" + normalized
+    root.pendingFocusTarget = DockModel.windowSelector(address)
     restoreCursorWarps.stop()
     if (!cursorCaptureProcess.running) cursorCaptureProcess.running = true
+  }
+
+  // A window as the hide/restore model reads it. The live workspace beats
+  // lastIpcObject, which only refreshes on demand.
+  function windowRef(toplevel) {
+    var workspace = toplevel.workspace || (toplevel.lastIpcObject || {}).workspace
+    return {
+      address: String(toplevel.address || ""),
+      workspaceId: workspace ? workspace.id : -1,
+      workspaceName: workspace ? String(workspace.name || "") : ""
+    }
+  }
+
+  function windowRefByAddress(address) {
+    var selector = DockModel.windowSelector(address)
+    var values = Hyprland.toplevels.values
+    for (var i = 0; i < values.length; i++) {
+      if (DockModel.windowSelector(values[i].address) === selector) return root.windowRef(values[i])
+    }
+    return null
+  }
+
+  function hideWindows(windows) {
+    var dispatches = DockModel.hideDispatches(windows)
+    for (var i = 0; i < dispatches.length; i++) Hyprland.dispatch(dispatches[i])
+  }
+
+  function hideApp(id) {
+    if (id) root.hideWindows(root.gatherWindowsForApp(id))
+  }
+
+  function hideActiveWindow() {
+    if (Hyprland.activeToplevel) root.hideWindows([root.windowRef(Hyprland.activeToplevel)])
+  }
+
+  // Focus one of these windows, first bringing them back to the focused
+  // monitor when every one is hidden. Never Toplevel.activate(): it can warp
+  // the cursor. Returns false when there is no window to activate.
+  function activateWindows(windows) {
+    var monitor = Hyprland.focusedMonitor
+    var workspaceId = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+    var plan = DockModel.activationPlan(windows, workspaceId)
+    if (!plan) return false
+    for (var i = 0; i < plan.moves.length; i++) Hyprland.dispatch(plan.moves[i])
+    root.focusWindowAddress(plan.focus)
     return true
   }
 
-  function focusExistingWindow(hyprWindow) {
-    if (!hyprWindow || !hyprWindow.address) return false
-    return root.focusWindowAddress(hyprWindow.address)
+  function activateWindow(address) {
+    root.hidePreview()
+    var window = root.windowRefByAddress(address)
+    if (window) root.activateWindows([window])
   }
 
   onShellChanged: if (root.shell) root.refreshApps()
@@ -674,14 +698,9 @@ Item {
   function handleClick(item) {
     if (!item) return
     if (item.running) {
-      try {
-        // Never fall back to Toplevel.activate() here: it can warp the cursor.
-        // Existing windows must be focused through Hyprland's IPC path.
-        var hyprWindow = root.hyprlandWindowForItem(item)
-        if (!root.focusExistingWindow(hyprWindow))
-          console.warn("macos.dock: could not resolve running window for " + item.id)
-        return
-      } catch (error) {}
+      if (!root.activateWindows(root.gatherWindowsForApp(item.id)))
+        console.warn("macos.dock: could not resolve running window for " + item.id)
+      return
     }
     var entry = DockModel.entryFor(item.id, root.appEntries)
     // The launch bounce fires when the app actually opens (NOT RUNNING ->
@@ -807,12 +826,7 @@ Item {
   }
 
   function activateApp(id, name) {
-    try {
-      // Same no-warp focus path as clicking the dock: never Toplevel.activate().
-      var hyprWindow = root.hyprlandWindowForItem({ id: id })
-      if (hyprWindow && root.focusExistingWindow(hyprWindow)) return
-    } catch (error) {
-    }
+    if (root.activateWindows(root.gatherWindowsForApp(id))) return
     var entry = DockModel.entryFor(id, root.appEntries)
     var label = name || (entry && entry.name) || id
     root.launchApp(id, label)
@@ -908,6 +922,7 @@ Item {
     else if (action === "close") closeWindow(item.id)
     else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
     else if (action === "manageIcons") root.openIconManager(item)
+    else if (action === "hide") { root.hideApp(item.id); dockMenu.opened = false }
     if (action === "togglePin") { refreshItems(); savePinned() }
   }
 
@@ -1126,13 +1141,14 @@ Item {
         if (!match) continue
         var pos = root.array2(ipc.at)
         var size = root.array2(ipc.size)
+        var ref = root.windowRef(candidate)
         output.push({
-          address: String(candidate.address || ""),
+          address: ref.address,
+          workspaceName: ref.workspaceName,
           title: String(candidate.title || ""),
           active: !!(ipc.focused || candidate.focused),
           mapped: !!ipc.mapped,
-          minimized: !!ipc.minimized,
-          workspaceId: ipc.workspace ? ipc.workspace.id : -1,
+          workspaceId: ref.workspaceId,
           x: pos[0] || 0,
           y: pos[1] || 0,
           w: size[0] || 0,
@@ -1149,7 +1165,7 @@ Item {
   // whatever is on top). Instead, a thumbnail is captured when a window
   // becomes active (it is on top then) and cached by address. Previews reuse
   // the cache; windows without a cached thumbnail are captured on hover as a
-  // best-effort fallback. Windows on other workspaces or minimized windows
+  // best-effort fallback. Windows on other workspaces or hidden windows
   // that were never active fall back to the icon card.
   function snapshotWindows() {
     root.currentThumbBatch++
@@ -1160,7 +1176,7 @@ Item {
       if (!w.address) continue
       if (root.thumbCache[w.address] || root.inFlightAddrs[w.address]) continue
       // Skip only when we positively know the window cannot be captured.
-      if (w.minimized === true) continue
+      if (DockModel.isHiddenWorkspace(w.workspaceName)) continue
       if (w.mapped === false) continue
       if (w.workspaceId !== undefined && w.workspaceId >= 0 && w.workspaceId !== focused) continue
       if (!w.w || !w.h) continue
@@ -1226,12 +1242,6 @@ Item {
   function thumbnailFor(w) {
     if (!w || !w.thumbPath) return ""
     return Util.fileUrl(w.thumbPath)
-  }
-
-  function activatePreviewWindow(data) {
-    if (!data || !data.address) return
-    root.hidePreview()
-    root.focusWindowAddress(data.address)
   }
 
   function loadCustomIcons(content) {
@@ -2007,7 +2017,7 @@ Item {
     dockH: root.surfaceHeight
     iconSourceFor: function(data) { return root.iconSourceFor({ id: root.previewAppId }) }
     thumbnailFor: function(data) { return root.thumbnailFor(data) }
-    onActivated: function(data) { root.activatePreviewWindow(data) }
+    onActivated: function(data) { if (data) root.activateWindow(data.address) }
     onPreviewHoverEntered: previewGrace.stop()
     onPreviewHoverExited: previewGrace.restart()
   }

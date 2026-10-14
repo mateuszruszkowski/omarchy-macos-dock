@@ -10,7 +10,10 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Subtle hover scaling and application tooltips
 - Pinned application persistence
 - Running-application indicators
-- Pin, unpin, new-window, and close actions
+- Pin, unpin, new-window, hide, and close actions
+- Hide: right-click a running app and choose "Hide" to park all its windows on
+  Hyprland's `special:minimized` workspace. Clicking the icon, a window preview
+  or the app in Alt+Tab brings them back to the focused monitor's workspace
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
 - Point-and-click icon picker: right-click any app and choose "Get Info…" to
@@ -251,6 +254,10 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 | `altTabNext` | — | Next application in the switcher |
 | `altTabPrev` | — | Previous application in the switcher |
 | `altTabCancel` | — | Dismiss the switcher without changing focus |
+| `hideActive` | — | Hide the focused window (bind it to a key, e.g. `SUPER + H`) |
+| `hideApp` | app id | Hide every window of an app, like the menu's "Hide" |
+| `activateApp` | app id | Like clicking the dock icon: focus, unhide, or launch |
+| `activateWindow` | window address | Like clicking a preview card: focus or unhide one window |
 
 ### Built-in constants (not configurable)
 
