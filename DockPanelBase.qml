@@ -4,7 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
-import "DockModel.js" as DockModel
+import "DockModelBase.js" as DockModel
 import "IconResolver.js" as IconResolver
 
 Item {
@@ -114,8 +114,8 @@ Item {
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
   property bool autoHidden: false
-  property int dockHeight: 101
-  property int bottomMargin: 8
+  readonly property int dockHeight: root.metrics.dockHeight
+  property int bottomMargin: 4
   // Dock geometry is computed in screen coordinates (dockWindow fills the
   // screen) instead of conditional anchors. Switching sides cannot leave a
   // stale anchor competing with a new one, which otherwise pinned the dock to
@@ -132,7 +132,12 @@ Item {
     if (root.dockSide === "bottom") return dockWindow.height - root.surfaceHeight - root.bottomMargin + root.hideShift
     return (dockWindow.height - root.surfaceHeight) / 2
   }
-  property int iconSize: 50
+  // Persisted in dock-settings.json. Every dock length follows iconSize.
+  property int iconSize: DockModel.DEFAULT_SETTINGS.iconSize
+  property real magnification: DockModel.DEFAULT_SETTINGS.magnification
+  property bool bounce: DockModel.DEFAULT_SETTINGS.bounce
+  readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical)
+  onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
   property var tooltipItem: null
@@ -163,10 +168,6 @@ Item {
   // applyLayout(), which only mutates existing delegates, so no delegate is
   // ever torn down by dragging. Mutable pinned/running state lives in each
   // delegate's liveData binding so state changes never rebuild the Repeater.
-  property int slotWidth: 58
-  property int slotSpacing: 8
-  property int sidePadding: 18
-  property int separatorWidth: 14
   property string floatingId: ""
   property var tempDrag: ({ id: "", index: -1 })
   property var placements: ({})
@@ -182,7 +183,7 @@ Item {
   // Drop-inside state, tracked per-frame in onDragMoved from the cursor's
   // dockSurface-local position. Mapping item-to-item inside the same window
   // avoids the PanelWindow's output-anchored scene space entirely, so the
-  // check is a plain AABB against the surface the input mask hit-tests.
+  // check is a plain AABB against the visible dock surface.
   property bool dragInsideDock: true
   // macOS-style launch bounce (one-shot, vertical only). Triggered purely by
   // the NOT RUNNING -> RUNNING transition in refreshItems(), so the bounce
@@ -200,6 +201,10 @@ Item {
     function altTabNext() { root.altTabNext() }
     function altTabPrev() { root.altTabPrev() }
     function altTabCancel() { root.altTabCancel() }
+    function hideActive(): void { root.hideActiveWindow() }
+    function hideApp(appId: string): void { root.hideApp(appId) }
+    function activateApp(appId: string): void { root.activateApp(appId, "") }
+    function activateWindow(address: string): void { root.activateWindow(address) }
     function toggleAutoHide(): void { root.autoHide = !root.autoHide; root.saveSettings() }
     function setAutoHide(value: string): void {
       var v = String(value).toLowerCase()
@@ -263,7 +268,14 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide, screen: root.screenName })
+    var content = DockModel.serializeSettings({
+      autoHide: root.autoHide,
+      dockSide: root.dockSide,
+      screen: root.screenName,
+      iconSize: root.iconSize,
+      magnification: root.magnification,
+      bounce: root.bounce
+    })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -271,6 +283,17 @@ Item {
     // old manual .tmp + Process dance never completed the rename, leaving the
     // on-disk file stale and snapping the dock back to bottom/center on reload).
     settingsFile.setText(content)
+  }
+
+  // dockSide goes last: onDockSideChanged saves the settings and would
+  // otherwise write the previous values of the others back to disk.
+  function applySettings(settings) {
+    root.autoHide = settings.autoHide
+    if (root.screenName !== settings.screen) root.screenName = settings.screen
+    root.iconSize = settings.iconSize
+    root.magnification = settings.magnification
+    root.bounce = settings.bounce
+    if (root.dockSide !== settings.dockSide) root.dockSide = settings.dockSide
   }
 
   onDockSideChanged: {
@@ -391,69 +414,67 @@ Item {
     return raw
   }
 
-  function hyprlandWindowFor(window) {
-    var targetId = String(window.appId || window.desktopId || window.className || window.initialClass || "").toLowerCase()
-    var targetTitle = String(window.title || "")
-    var fallback = null
-    try {
-      var values = Hyprland.toplevels.values
-      for (var i = 0; i < values.length; i++) {
-        var candidate = values[i]
-        var ids = []
-        if (candidate.wayland && candidate.wayland.appId) ids.push(String(candidate.wayland.appId).toLowerCase())
-        var ipc = candidate.lastIpcObject || {}
-        if (ipc.appId) ids.push(String(ipc.appId).toLowerCase())
-        if (ipc["class"]) ids.push(String(ipc["class"]).toLowerCase())
-        if (ipc.initialClass) ids.push(String(ipc.initialClass).toLowerCase())
-        if (ids.indexOf(targetId) === -1) continue
-        if (targetTitle && candidate.title === targetTitle) return candidate
-        if (!fallback) fallback = candidate
-      }
-    } catch (error) {}
-    return fallback
-  }
-
-  function hyprlandWindowForItem(item) {
-    if (!item) return null
-    var fallback = null
-    try {
-      var values = Hyprland.toplevels.values
-      for (var i = 0; i < values.length; i++) {
-        var candidate = values[i]
-        var ids = []
-        if (candidate.wayland && candidate.wayland.appId) ids.push(String(candidate.wayland.appId).toLowerCase())
-        var ipc = candidate.lastIpcObject || {}
-        if (ipc.appId) ids.push(String(ipc.appId).toLowerCase())
-        if (ipc["class"]) ids.push(String(ipc["class"]).toLowerCase())
-        if (ipc.initialClass) ids.push(String(ipc.initialClass).toLowerCase())
-        for (var j = 0; j < ids.length; j++) {
-          if (ids[j] === String(item.id).toLowerCase()) return candidate
-          if (root.desktopIdForWindow({ appId: ids[j], title: candidate.title }) === item.id) {
-            if (!fallback) fallback = candidate
-          }
-        }
-      }
-    } catch (error) {}
-    return fallback
-  }
-
   function focusWindowAddress(address) {
-    if (!address) return false
+    if (!address) return
     // This Omarchy build uses Hyprland's Lua dispatcher syntax. The older
     // `workspace ...` / `focuswindow ...` strings are parsed as Lua and fail.
     // Focusing by address also switches to the window's workspace without
     // going through Toplevel.activate(), which can warp the pointer.
-    var normalized = String(address)
-    if (normalized.indexOf("0x") !== 0) normalized = "0x" + normalized
-    root.pendingFocusTarget = "address:" + normalized
+    root.pendingFocusTarget = DockModel.windowSelector(address)
     restoreCursorWarps.stop()
     if (!cursorCaptureProcess.running) cursorCaptureProcess.running = true
+  }
+
+  // A window as the hide/restore model reads it. The live workspace beats
+  // lastIpcObject, which only refreshes on demand.
+  function windowRef(toplevel) {
+    var workspace = toplevel.workspace || (toplevel.lastIpcObject || {}).workspace
+    return {
+      address: String(toplevel.address || ""),
+      workspaceId: workspace ? workspace.id : -1,
+      workspaceName: workspace ? String(workspace.name || "") : ""
+    }
+  }
+
+  function windowRefByAddress(address) {
+    var selector = DockModel.windowSelector(address)
+    var values = Hyprland.toplevels.values
+    for (var i = 0; i < values.length; i++) {
+      if (DockModel.windowSelector(values[i].address) === selector) return root.windowRef(values[i])
+    }
+    return null
+  }
+
+  function hideWindows(windows) {
+    var dispatches = DockModel.hideDispatches(windows)
+    for (var i = 0; i < dispatches.length; i++) Hyprland.dispatch(dispatches[i])
+  }
+
+  function hideApp(id) {
+    if (id) root.hideWindows(root.gatherWindowsForApp(id))
+  }
+
+  function hideActiveWindow() {
+    if (Hyprland.activeToplevel) root.hideWindows([root.windowRef(Hyprland.activeToplevel)])
+  }
+
+  // Focus one of these windows, first bringing them back to the focused
+  // monitor when every one is hidden. Never Toplevel.activate(): it can warp
+  // the cursor. Returns false when there is no window to activate.
+  function activateWindows(windows) {
+    var monitor = Hyprland.focusedMonitor
+    var workspaceId = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+    var plan = DockModel.activationPlan(windows, workspaceId)
+    if (!plan) return false
+    for (var i = 0; i < plan.moves.length; i++) Hyprland.dispatch(plan.moves[i])
+    root.focusWindowAddress(plan.focus)
     return true
   }
 
-  function focusExistingWindow(hyprWindow) {
-    if (!hyprWindow || !hyprWindow.address) return false
-    return root.focusWindowAddress(hyprWindow.address)
+  function activateWindow(address) {
+    root.hidePreview()
+    var window = root.windowRefByAddress(address)
+    if (window) root.activateWindows([window])
   }
 
   onShellChanged: if (root.shell) root.refreshApps()
@@ -567,6 +588,7 @@ Item {
   // opens (NOT RUNNING -> RUNNING). The animation always runs to completion;
   // `running` is only the launch detector, never a stop signal.
   function triggerLaunchBounce(id) {
+    if (!root.bounce) return
     if (!id || id === "__phantom__") return
     if (id === root.floatingId) return
     // No visible surface, no bounce: when auto-hide has slid the dock
@@ -636,7 +658,7 @@ Item {
     var cursorX = root.cursorXInRow()
     var baseFlow = DockModel.buildFlow(root.dockOrder, [], root.floatingId, -1)
     if (root.floatingId && cursorX >= 0)
-      root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, DockModel.LAYOUT_OPTS)
+      root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, root.metrics)
     var mainFlow = DockModel.buildFlow(
       root.dockOrder,
       [],
@@ -644,7 +666,7 @@ Item {
       root.floatingId ? root.tempDrag.index : -1
     )
     var fullFlow = mainFlow.slice()
-    var result = DockModel.computeLayout(fullFlow, cursorX, DockModel.LAYOUT_OPTS)
+    var result = DockModel.computeLayout(fullFlow, cursorX, root.metrics)
     root.placements = result.placements
     root.layoutWidth = result.totalWidth
     for (var id in result.placements) {
@@ -696,14 +718,9 @@ Item {
   function handleClick(item) {
     if (!item) return
     if (item.running) {
-      try {
-        // Never fall back to Toplevel.activate() here: it can warp the cursor.
-        // Existing windows must be focused through Hyprland's IPC path.
-        var hyprWindow = root.hyprlandWindowForItem(item)
-        if (!root.focusExistingWindow(hyprWindow))
-          console.warn("macos.dock: could not resolve running window for " + item.id)
-        return
-      } catch (error) {}
+      if (!root.activateWindows(root.gatherWindowsForApp(item.id)))
+        console.warn("macos.dock: could not resolve running window for " + item.id)
+      return
     }
     var entry = DockModel.entryFor(item.id, root.appEntries)
     // The launch bounce fires when the app actually opens (NOT RUNNING ->
@@ -829,12 +846,7 @@ Item {
   }
 
   function activateApp(id, name) {
-    try {
-      // Same no-warp focus path as clicking the dock: never Toplevel.activate().
-      var hyprWindow = root.hyprlandWindowForItem({ id: id })
-      if (hyprWindow && root.focusExistingWindow(hyprWindow)) return
-    } catch (error) {
-    }
+    if (root.activateWindows(root.gatherWindowsForApp(id))) return
     var entry = DockModel.entryFor(id, root.appEntries)
     var label = name || (entry && entry.name) || id
     root.launchApp(id, label)
@@ -930,6 +942,7 @@ Item {
     else if (action === "close") closeWindow(item.id)
     else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
     else if (action === "manageIcons") root.openIconManager(item)
+    else if (action === "hide") { root.hideApp(item.id); dockMenu.opened = false }
     if (action === "togglePin") { refreshItems(); savePinned() }
   }
 
@@ -991,10 +1004,8 @@ Item {
     var id = item.id
     if (!root.floatingId) return
     // `dragInsideDock` is tracked per-frame in onDragMoved from the cursor's
-    // dockSurface-local position — the same surface the input mask
-    // (Region { item: dockSurface }) hit-tests — so a drop is judged against
-    // exactly what received the drag instead of a coordinate mapping
-    // re-derived at release time.
+    // dockSurface-local position, so a drop is judged against the visible
+    // dock instead of a coordinate mapping re-derived at release time.
     var inside = root.dragInsideDock
     console.log("macos.dock finishDrag", JSON.stringify({ id: id, inside: inside, localX: surfacePosition.x, localY: surfacePosition.y, surfaceW: dockSurface.width, surfaceH: dockSurface.height, cursorX: root.cursorXInRow() }))
     var wasPinned = root.pinnedIds.indexOf(id) !== -1
@@ -1018,7 +1029,7 @@ Item {
         // instantly at full opacity exactly where the ghost was, and applyLayout
         // then assigns the identical x, so no spring runs.
         var dropFlow = DockModel.buildFlow(newOrder, [], "", -1)
-        var dropResult = DockModel.computeLayout(dropFlow, root.cursorXInRow(), DockModel.LAYOUT_OPTS)
+        var dropResult = DockModel.computeLayout(dropFlow, root.cursorXInRow(), root.metrics)
         var dropP = dropResult.placements[id]
         var dropDelegate = root.delegateById[id]
         if (dropP && dropDelegate) {
@@ -1148,13 +1159,14 @@ Item {
         if (!match) continue
         var pos = root.array2(ipc.at)
         var size = root.array2(ipc.size)
+        var ref = root.windowRef(candidate)
         output.push({
-          address: String(candidate.address || ""),
+          address: ref.address,
+          workspaceName: ref.workspaceName,
           title: String(candidate.title || ""),
           active: !!(ipc.focused || candidate.focused),
           mapped: !!ipc.mapped,
-          minimized: !!ipc.minimized,
-          workspaceId: ipc.workspace ? ipc.workspace.id : -1,
+          workspaceId: ref.workspaceId,
           x: pos[0] || 0,
           y: pos[1] || 0,
           w: size[0] || 0,
@@ -1171,7 +1183,7 @@ Item {
   // whatever is on top). Instead, a thumbnail is captured when a window
   // becomes active (it is on top then) and cached by address. Previews reuse
   // the cache; windows without a cached thumbnail are captured on hover as a
-  // best-effort fallback. Windows on other workspaces or minimized windows
+  // best-effort fallback. Windows on other workspaces or hidden windows
   // that were never active fall back to the icon card.
   function snapshotWindows() {
     root.currentThumbBatch++
@@ -1182,7 +1194,7 @@ Item {
       if (!w.address) continue
       if (root.thumbCache[w.address] || root.inFlightAddrs[w.address]) continue
       // Skip only when we positively know the window cannot be captured.
-      if (w.minimized === true) continue
+      if (DockModel.isHiddenWorkspace(w.workspaceName)) continue
       if (w.mapped === false) continue
       if (w.workspaceId !== undefined && w.workspaceId >= 0 && w.workspaceId !== focused) continue
       if (!w.w || !w.h) continue
@@ -1248,12 +1260,6 @@ Item {
   function thumbnailFor(w) {
     if (!w || !w.thumbPath) return ""
     return Util.fileUrl(w.thumbPath)
-  }
-
-  function activatePreviewWindow(data) {
-    if (!data || !data.address) return
-    root.hidePreview()
-    root.focusWindowAddress(data.address)
   }
 
   function loadCustomIcons(content) {
@@ -1460,21 +1466,16 @@ Item {
     atomicWrites: true
     printErrors: false
     onLoaded: {
-      var parsed = DockModel.parseSettings(text(), { autoHide: true, dockSide: "bottom" })
+      var parsed = DockModel.parseSettings(text())
       if (!root.settingsLoaded) {
         root.settingsLoaded = true
-        root.autoHide = parsed.autoHide
       } else {
         if (!DockModel.shouldReprocessSettings(text())) return
         // Remember what was applied, not only what the dock last wrote, so an
         // edit back to an earlier value is not mistaken for our own write.
         DockModel.markSettingsWritten(text())
-        root.autoHide = parsed.autoHide
       }
-      // Set screenName before dockSide: onDockSideChanged saves the settings
-      // and would otherwise write the previous screen back to disk.
-      if (root.screenName !== parsed.screen) root.screenName = parsed.screen
-      if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
+      root.applySettings(parsed)
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
     }
@@ -1484,9 +1485,7 @@ Item {
     }
     onLoadFailed: {
       root.settingsLoaded = true
-      root.autoHide = true
-      root.screenName = ""
-      root.dockSide = "bottom"
+      root.applySettings(DockModel.DEFAULT_SETTINGS)
     }
   }
 
@@ -1669,7 +1668,38 @@ Item {
     // 0.50 alpha tint below is deliberately the only "glass" effect; no
     // compositor backdrop blur is requested for this namespace or for
     // "macos-dock-material" in DockPanel.qml, which shares this geometry.
-    mask: Region { item: dockSurface }
+    mask: Region { item: dockHitArea }
+
+    // The input region: the dock surface, grown toward the screen interior by
+    // how far a magnified icon reaches past it. Only while hovered, so an idle
+    // dock leaves no dead click zone above it. Declared before dockSurface so
+    // the icons stay on top of its mouseArea.
+    Item {
+      id: dockHitArea
+      readonly property real reach: root.dockHovered ? root.metrics.overhang : 0
+      x: root.dockSide === "right" ? dockSurface.x - reach : dockSurface.x
+      y: root.dockSide === "bottom" ? dockSurface.y - reach : dockSurface.y
+      width: dockSurface.width + (root.vertical ? reach : 0)
+      height: dockSurface.height + (root.vertical ? 0 : reach)
+
+      MouseArea {
+        id: mouseArea
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        hoverEnabled: true
+        onExited: {
+          root.maybeScheduleHide()
+        }
+        onPositionChanged: {
+          var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
+          root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
+          root.applyLayout()
+        }
+        onClicked: function(mouse) {
+          if (mouse.button === Qt.RightButton) root.openIconManager()
+        }
+      }
+    }
 
     Rectangle {
       id: dockSurface
@@ -1677,7 +1707,7 @@ Item {
       y: root.surfaceY
       width: root.surfaceWidth
       height: root.surfaceHeight
-      radius: 18
+      radius: root.metrics.cornerRadius
       color: Util.alpha(Color.background, 0.50)
       border.color: Util.alpha(Color.foreground, 0.04)
       border.width: 1
@@ -1705,9 +1735,9 @@ Item {
       Item {
         id: dockRow
         anchors.centerIn: parent
-        anchors.verticalCenterOffset: 6
-        width: root.layoutWidth - 2 * root.sidePadding
-        height: 70
+        anchors.verticalCenterOffset: root.metrics.rowOffset
+        width: root.layoutWidth - 2 * root.metrics.sidePadding
+        height: root.metrics.rowHeight
         // Left/right docks reuse the horizontal layout engine: the row is
         // rotated -90° so the x-axis becomes screen-y (first item on top) and
         // each wrapper counter-rotates +90° to keep icons upright.
@@ -1728,8 +1758,8 @@ Item {
             // The wrapper spans the scaled slot so the centered icon sits at
             // the slot's visual center — a single magnified icon stays
             // centered in the dock instead of drifting left.
-            width: root.slotWidth * targetScale
-            height: 70
+            width: root.metrics.slotWidth * targetScale
+            height: root.metrics.rowHeight
             x: 0
             rotation: root.vertical ? 90 : 0
             property bool animating: false
@@ -1780,6 +1810,9 @@ Item {
               anchors.centerIn: parent
               itemData: wrapper.liveData
               iconSize: root.iconSize
+              width: root.metrics.itemWidth
+              height: root.metrics.itemHeight
+              launchBounceHeight: root.metrics.bounceHeight
               dockSide: root.dockSide
               animationEnabled: wrapper.animating
               iconSourceOverride: root.iconSourceFor(modelData)
@@ -1814,37 +1847,18 @@ Item {
         }
 
       }
-
-      MouseArea {
-        id: mouseArea
-        anchors.fill: parent
-        z: -1
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
-        hoverEnabled: true
-        onExited: {
-          root.maybeScheduleHide()
-        }
-        onPositionChanged: {
-          var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
-          root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
-          root.applyLayout()
-        }
-        onClicked: function(mouse) {
-          if (mouse.button === Qt.RightButton) root.openIconManager()
-        }
-      }
     }
 
     Rectangle {
       visible: root.tooltipVisible && root.tooltipItem !== null
       z: 20
       x: {
-        if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8
-        if (root.vertical) return dockSurface.x - width - 8
+        if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8 + root.metrics.clearance
+        if (root.vertical) return dockSurface.x - width - 8 - root.metrics.clearance
         return Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
       }
       y: {
-        if (!root.vertical) return dockSurface.y - height - 8
+        if (!root.vertical) return dockSurface.y - height - 8 - root.metrics.clearance
         return Math.max(12, Math.min(root.tooltipCenterX - height / 2, parent.height - height - 12))
       }
       width: tooltipText.implicitWidth + 20
@@ -1886,7 +1900,7 @@ Item {
       width: root.vertical ? 18 : parent.width
       height: root.vertical ? parent.height : 18
       hoverEnabled: true
-      // Hover here is already covered by the full dockSurface mouseArea
+      // Hover here is already covered by the dockHitArea mouseArea
       // (containsMouse) and by icon hover (hoveredItemId). No manual
       // dockHovered needed — the binding handles it.
       onExited: root.clearHover()
@@ -2027,9 +2041,10 @@ Item {
     dockY: root.surfaceY
     dockW: root.surfaceWidth
     dockH: root.surfaceHeight
+    clearance: root.metrics.clearance
     iconSourceFor: function(data) { return root.iconSourceFor({ id: root.previewAppId }) }
     thumbnailFor: function(data) { return root.thumbnailFor(data) }
-    onActivated: function(data) { root.activatePreviewWindow(data) }
+    onActivated: function(data) { if (data) root.activateWindow(data.address) }
     onPreviewHoverEntered: previewGrace.stop()
     onPreviewHoverExited: previewGrace.restart()
   }

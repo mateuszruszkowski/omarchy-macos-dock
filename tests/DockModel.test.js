@@ -6,18 +6,12 @@ const vm = require("node:vm")
 function loadQmlJs(path) {
   const source = fs.readFileSync(path, "utf8").replace(/^\.pragma library\s*/, "")
   const context = { module: { exports: {} }, console }
-  // Provide a minimal Qt mock so Qt.include works under Node.js.
-  context.Qt = {
-    include: (includePath) => {
-      const incSource = fs.readFileSync(includePath, "utf8").replace(/^\.pragma library\s*/, "")
-      vm.runInNewContext(incSource, context, { filename: includePath })
-    }
-  }
   vm.runInNewContext(source, context, { filename: path })
   return context.module.exports
 }
 
-const model = loadQmlJs("DockModel.js")
+const model = loadQmlJs("DockModelBase.js")
+const plain = (value) => JSON.parse(JSON.stringify(value))
 
 test("parses and normalizes pinned ids", () => {
   assert.deepEqual(Array.from(model.parsePinned('{"pinned":["code.desktop","code","ghostty"]}')), ["code", "ghostty"])
@@ -237,6 +231,85 @@ test("insertionIndexFor picks the nearest slot", () => {
   assert.equal(model.insertionIndexFor(9999, flow, opts), 3)
 })
 
+const STOCK_TABLE = {
+  iconSize: 54, slotWidth: 60, spacing: 6, sidePadding: 12, separatorWidth: 12, radius: 96,
+  dockHeight: 78, rowHeight: 70, rowOffset: 6, cornerRadius: 18, itemWidth: 62, itemHeight: 72,
+  bounceHeight: 28, hoverScale: 1.36,
+}
+
+test("dockMetrics at the stock icon size is the stock dock", () => {
+  assert.deepEqual(plain(model.dockMetrics(54, 1.36, false)), { ...STOCK_TABLE, overhang: 17, clearance: 0 })
+  assert.deepEqual(plain(model.dockMetrics(54, 1.36, true)), { ...STOCK_TABLE, overhang: 15, clearance: 0 })
+  assert.deepEqual(plain(model.LAYOUT_OPTS), { ...STOCK_TABLE, overhang: 17, clearance: 0 })
+})
+
+test("dockMetrics scales every length with the icon size, rounded to whole pixels", () => {
+  const big = model.dockMetrics(72, 1.36, false)
+  assert.equal(big.iconSize, 72)
+  assert.equal(big.dockHeight, 104)
+  assert.equal(big.slotWidth, 80)
+  assert.equal(big.radius, 128)
+  assert.equal(big.itemHeight, 96)
+  assert.equal(big.rowHeight, 93)
+  assert.equal(big.bounceHeight, 37)
+  const small = model.dockMetrics(40, 1.36, false)
+  assert.equal(small.dockHeight, 58)
+  assert.equal(small.slotWidth, 44)
+  assert.equal(small.spacing, 4)
+  assert.equal(small.cornerRadius, 13)
+})
+
+test("clearance is the overhang beyond the stock dock's, per orientation", () => {
+  const bottom = model.dockMetrics(72, 1.36, false)
+  assert.equal(bottom.overhang, 23)
+  assert.equal(bottom.clearance, 6)
+  const side = model.dockMetrics(72, 1.36, true)
+  assert.equal(side.overhang, 20)
+  assert.equal(side.clearance, 5)
+  assert.equal(model.dockMetrics(54, 2, false).clearance, 63 - 17)
+  assert.equal(model.dockMetrics(32, 1.36, false).clearance, 0)
+})
+
+test("magnification 1 never magnifies and never overhangs", () => {
+  for (const vertical of [false, true]) {
+    const opts = model.dockMetrics(96, 1, vertical)
+    assert.equal(opts.overhang, 0)
+    assert.equal(opts.clearance, 0)
+    const flow = [{ id: "a" }, { id: "b" }, { id: "c" }]
+    const center = opts.slotWidth + opts.spacing + opts.slotWidth / 2
+    const result = model.computeLayout(flow, center, opts)
+    for (const id of ["a", "b", "c"]) assert.equal(result.placements[id].scale, 1)
+  }
+})
+
+test("every size and magnification keeps the dock's contents in their space", () => {
+  const flow = [{ id: "a" }, { id: "b" }, { id: "c" }]
+  for (let size = 32; size <= 96; size += 8) {
+    for (const magnification of [1, 1.36, 2]) {
+      const label = `iconSize ${size}, magnification ${magnification}`
+      const bottom = model.dockMetrics(size, magnification, false)
+      const itemTop = bottom.dockHeight / 2 + bottom.rowOffset - bottom.itemHeight / 2
+      const dotBottom = itemTop + size + 2 + 4
+      assert.ok(itemTop >= 0, `${label}: icon starts inside the dock`)
+      assert.ok(dotBottom <= bottom.dockHeight, `${label}: running dot ends inside the dock`)
+      assert.ok(bottom.itemWidth <= bottom.slotWidth + bottom.spacing, `${label}: resting neighbors do not overlap`)
+
+      const center = bottom.slotWidth + bottom.spacing + bottom.slotWidth / 2
+      const scale = model.computeLayout(flow, center, bottom).placements.b.scale
+      assert.ok(Math.abs(scale - magnification) < 1e-9, `${label}: the icon under the pointer magnifies fully`)
+      const bottomReach = bottom.itemHeight * scale - (itemTop + bottom.itemHeight)
+      assert.ok(bottomReach <= bottom.overhang, `${label}: bottom dock reach ${bottomReach} within ${bottom.overhang}`)
+      assert.ok(bottom.overhang < Math.max(0, bottomReach) + 1, `${label}: bottom overhang is tight`)
+
+      const side = model.dockMetrics(size, magnification, true)
+      const itemInner = side.dockHeight / 2 - side.itemWidth / 2 + side.itemWidth * scale
+      const sideReach = itemInner - side.dockHeight
+      assert.ok(sideReach <= side.overhang, `${label}: side dock reach ${sideReach} within ${side.overhang}`)
+      assert.ok(side.overhang < Math.max(0, sideReach) + 1, `${label}: side overhang is tight`)
+    }
+  }
+})
+
 test("settings parse and serialize autoHide", () => {
   assert.equal(model.parseSettings('{"autoHide":true}', { autoHide: false }).autoHide, true)
   assert.equal(model.parseSettings('{"autoHide":false}', { autoHide: true }).autoHide, false)
@@ -280,6 +353,92 @@ test("settings parse and serialize screen", () => {
   assert.equal(JSON.parse(s).screen, "DP-2")
   assert.equal(model.parseSettings(s, {}).screen, "DP-2")
   assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
+})
+
+const DEFAULTS = { autoHide: true, dockSide: "bottom", screen: "", iconSize: 54, magnification: 1.36, bounce: true }
+const CUSTOM = { autoHide: false, dockSide: "right", screen: "DP-2", iconSize: 80, magnification: 1.75, bounce: false }
+
+test("settings default to the stock dock", () => {
+  assert.deepEqual(plain(model.DEFAULT_SETTINGS), DEFAULTS)
+  for (const text of ["", "{}", "not json", "[]", "null", "42"]) {
+    assert.deepEqual(plain(model.parseSettings(text)), DEFAULTS, `parse ${JSON.stringify(text)}`)
+  }
+})
+
+test("settings read icon size, magnification and bounce", () => {
+  const parsed = model.parseSettings('{"iconSize":72,"magnification":1.8,"bounce":false}')
+  assert.deepEqual(plain(parsed), { ...DEFAULTS, iconSize: 72, magnification: 1.8, bounce: false })
+})
+
+test("settings clamp icon size to 32..96 after rounding and magnification to 1..2", () => {
+  const size = (value) => model.parseSettings(JSON.stringify({ iconSize: value })).iconSize
+  assert.equal(size(10), 32)
+  assert.equal(size(31.4), 32)
+  assert.equal(size(32), 32)
+  assert.equal(size(60.4), 60)
+  assert.equal(size(60.6), 61)
+  assert.equal(size(96), 96)
+  assert.equal(size(97), 96)
+  assert.equal(size(500), 96)
+  const mag = (value) => model.parseSettings(JSON.stringify({ magnification: value })).magnification
+  assert.equal(mag(0.5), 1)
+  assert.equal(mag(1), 1)
+  assert.equal(mag(1.5), 1.5)
+  assert.equal(mag(2), 2)
+  assert.equal(mag(2.5), 2)
+})
+
+test("settings accept numeric strings and the strings true/false for bounce", () => {
+  const parsed = model.parseSettings('{"iconSize":" 72 ","magnification":"1.5","bounce":"false"}')
+  assert.equal(parsed.iconSize, 72)
+  assert.equal(parsed.magnification, 1.5)
+  assert.equal(parsed.bounce, false)
+  assert.equal(model.parseSettings('{"iconSize":"200","magnification":"0.2"}').iconSize, 96)
+  assert.equal(model.parseSettings('{"iconSize":"200","magnification":"0.2"}').magnification, 1)
+  assert.equal(model.parseSettings('{"bounce":"true"}', { bounce: false }).bounce, true)
+})
+
+test("settings keep the base value for a wrong type", () => {
+  const base = { iconSize: 64, magnification: 1.5, bounce: false }
+  for (const bad of [null, true, false, {}, [], "big", "", "  ", "Infinity", "54px"]) {
+    const text = JSON.stringify({ iconSize: bad, magnification: bad })
+    const parsed = model.parseSettings(text, base)
+    assert.equal(parsed.iconSize, 64, `iconSize ${JSON.stringify(bad)}`)
+    assert.equal(parsed.magnification, 1.5, `magnification ${JSON.stringify(bad)}`)
+  }
+  for (const bounce of [true, false]) {
+    for (const bad of [null, 1, 0, "yes", "TRUE", "", {}]) {
+      const parsed = model.parseSettings(JSON.stringify({ bounce: bad }), { bounce })
+      assert.equal(parsed.bounce, bounce, `bounce ${JSON.stringify(bad)} over ${bounce}`)
+    }
+  }
+  assert.equal(model.parseSettings('{"iconSize":true}').iconSize, 54)
+})
+
+test("broken settings fall back to the normalized fallback", () => {
+  assert.deepEqual(plain(model.parseSettings("not json", CUSTOM)), CUSTOM)
+  assert.deepEqual(plain(model.parseSettings("", CUSTOM)), CUSTOM)
+  const normalized = model.parseSettings("not json", { iconSize: 200, magnification: 0, dockSide: "LEFT" })
+  assert.deepEqual(plain(normalized), { ...DEFAULTS, iconSize: 96, magnification: 1, dockSide: "left" })
+})
+
+test("settings write only the keys that differ from the defaults", () => {
+  assert.deepEqual(JSON.parse(model.serializeSettings(DEFAULTS)), { version: 1, autoHide: true, dockSide: "bottom" })
+  for (const [key, value] of [["iconSize", 72], ["magnification", 1.5], ["bounce", false]]) {
+    const written = JSON.parse(model.serializeSettings({ ...DEFAULTS, [key]: value }))
+    assert.deepEqual(written, { version: 1, autoHide: true, dockSide: "bottom", [key]: value }, key)
+  }
+})
+
+test("custom settings round-trip through the file", () => {
+  assert.deepEqual(plain(model.parseSettings(model.serializeSettings(CUSTOM))), CUSTOM)
+})
+
+test("rewriting the file for one setting keeps every other custom setting", () => {
+  const file = JSON.stringify({ version: 1, ...CUSTOM }, null, 2)
+  const loaded = model.parseSettings(file)
+  const rewritten = model.serializeSettings({ ...plain(loaded), autoHide: !loaded.autoHide })
+  assert.deepEqual(plain(model.parseSettings(rewritten)), { ...CUSTOM, autoHide: true })
 })
 
 test("pickScreenName chooses the dock output", () => {
@@ -415,4 +574,67 @@ test("desktopIdForWindow prefers exact id over Name fallback", () => {
   ]
   assert.equal(model.desktopIdForWindow("firefox", entries), "firefox")
   assert.equal(model.desktopIdForWindow("unknown-app", entries), "unknown-app")
+})
+
+const shown = (address, workspaceName) => ({ address, workspaceName })
+const parked = (address) => ({ address, workspaceName: "special:minimized" })
+
+test("hidden state is read from the special:minimized workspace name", () => {
+  assert.equal(model.isHiddenWorkspace("special:minimized"), true)
+  assert.equal(model.isHiddenWorkspace("special:scratchpad"), false)
+  assert.equal(model.isHiddenWorkspace("3"), false)
+  assert.equal(model.isHiddenWorkspace(""), false)
+  assert.equal(model.isHiddenWorkspace(undefined), false)
+})
+
+test("hide moves every window not already hidden, silently, by address", () => {
+  const dispatches = model.hideDispatches([
+    shown("0xaaa", "1"),
+    parked("0xbbb"),
+    shown("ccc", "special:scratchpad"),
+  ])
+  assert.deepEqual(Array.from(dispatches), [
+    'hl.dsp.window.move({ window = "address:0xaaa", workspace = "special:minimized", follow = false })',
+    'hl.dsp.window.move({ window = "address:0xccc", workspace = "special:minimized", follow = false })',
+  ])
+})
+
+test("hide of an app whose windows are all hidden dispatches nothing", () => {
+  assert.deepEqual(Array.from(model.hideDispatches([parked("0xaaa"), parked("0xbbb")])), [])
+})
+
+test("activating an app with no windows returns null so the caller launches", () => {
+  assert.equal(model.activationPlan([], 1), null)
+  assert.equal(model.activationPlan([{ address: "" }], 1), null)
+})
+
+test("activating an app with a visible window focuses it and restores nothing", () => {
+  const plan = model.activationPlan([parked("0xaaa"), shown("0xbbb", "4"), parked("0xccc")], 1)
+  assert.deepEqual(Array.from(plan.moves), [])
+  assert.equal(plan.focus, "0xbbb")
+})
+
+test("activating an app whose windows are all hidden brings them all to the active workspace", () => {
+  const plan = model.activationPlan([parked("0xaaa"), parked("0xbbb")], 3)
+  assert.deepEqual(Array.from(plan.moves), [
+    'hl.dsp.window.move({ window = "address:0xaaa", workspace = "3", follow = false })',
+    'hl.dsp.window.move({ window = "address:0xbbb", workspace = "3", follow = false })',
+  ])
+  assert.equal(plan.focus, "0xaaa")
+})
+
+test("activating one hidden window from its preview restores only that window", () => {
+  const plan = model.activationPlan([parked("0xbbb")], 2)
+  assert.deepEqual(Array.from(plan.moves), [
+    'hl.dsp.window.move({ window = "address:0xbbb", workspace = "2", follow = false })',
+  ])
+  assert.equal(plan.focus, "0xbbb")
+})
+
+test("hidden windows stay put when the focused monitor has no regular workspace", () => {
+  for (const workspaceId of [-1, -98, 0, undefined]) {
+    const plan = model.activationPlan([parked("0xaaa")], workspaceId)
+    assert.deepEqual(Array.from(plan.moves), [], `workspace ${workspaceId}`)
+    assert.equal(plan.focus, "", `workspace ${workspaceId}`)
+  }
 })

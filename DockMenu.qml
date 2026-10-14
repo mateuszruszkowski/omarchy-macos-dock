@@ -120,15 +120,21 @@ PanelWindow {
         spacing: 10
 
         Repeater {
-          model: [
-            { action: "setIcon", label: "Get Info", glyph: "✦", detail: "Change icon" },
-            { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", glyph: "⌖", detail: "Dock placement" },
-            { action: "newWindow", label: "New Window", glyph: "＋", detail: "Open another" },
-            { action: "manageIcons", label: "Manage Icons", glyph: "▦", detail: "Browse apps" }
-          ]
+          id: actionCards
+          model: {
+            var actions = [
+              { action: "setIcon", label: "Get Info", glyph: "✦", detail: "Change icon" },
+              { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", glyph: "⌖", detail: "Dock placement" },
+              { action: "newWindow", label: "New Window", glyph: "＋", detail: "Open another" },
+              { action: "manageIcons", label: "Manage Icons", glyph: "▦", detail: "Browse apps" }
+            ]
+            if (root.itemData && root.itemData.running)
+              actions.push({ action: "hide", label: "Hide", glyph: "－", detail: "All windows" })
+            return actions
+          }
           delegate: Rectangle {
             required property var modelData
-            width: (parent.width - 30) / 4
+            width: (parent.width - parent.spacing * (actionCards.count - 1)) / actionCards.count
             height: parent.height
             radius: 14
             color: actionMouse.containsMouse ? Util.alpha(Color.accent, 0.16) : Util.alpha(Color.foreground, 0.065)

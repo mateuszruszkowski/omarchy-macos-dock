@@ -19,13 +19,6 @@ Item {
     shell: root.shell
     pluginRegistry: root.pluginRegistry
     manifest: root.manifest
-    dockHeight: 78
-    bottomMargin: 4
-    iconSize: 54
-    slotWidth: 60
-    slotSpacing: 6
-    sidePadding: 12
-    separatorWidth: 12
   }
 
   // A lightweight material layer sits above the legacy surface. It is
@@ -50,7 +43,7 @@ Item {
       y: dock.surfaceY
       width: dock.surfaceWidth
       height: dock.surfaceHeight
-      radius: 18
+      radius: dock.metrics.cornerRadius
       color: "transparent"
       border.color: "transparent"
       border.width: 0

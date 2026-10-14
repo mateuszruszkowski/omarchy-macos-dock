@@ -7,10 +7,14 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 ## Features
 
 - Glassy floating dock surface
-- Subtle hover scaling and application tooltips
+- Hover magnification and application tooltips, with configurable icon size
+  and magnification
 - Pinned application persistence
 - Running-application indicators
-- Pin, unpin, new-window, and close actions
+- Pin, unpin, new-window, hide, and close actions
+- Hide: right-click a running app and choose "Hide" to park all its windows on
+  Hyprland's `special:minimized` workspace. Clicking the icon, a window preview
+  or the app in Alt+Tab brings them back to the focused monitor's workspace
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
 - Point-and-click icon picker: right-click any app and choose "Get Info…" to
@@ -221,17 +225,21 @@ Changes are watched and applied without restarting the shell. The helper is inst
 
 ## Configuration
 
-The dock keeps all of its state under `~/.config/omarchy/`. Only `autoHide` is
-a persisted *setting*; pins, order, and icon overrides are managed through the
-UI or the icon CLI. Timing, sizes, and geometry are baked in and not yet
-user-configurable.
+The dock keeps all of its state under `~/.config/omarchy/`. The settings below
+live in `dock-settings.json`, and edits to that file apply without restarting
+the shell. Pins, order, and icon overrides are managed through the UI or the
+icon CLI. Timing is baked in.
 
 ### Settings
 
 | Setting | Type | Default | Stored in | Description |
 |---|---|---|---|---|
 | `autoHide` | bool | `true` | `dock-settings.json` | Glide off-screen when idle and reveal from the bottom edge. When off, the dock reserves its footprint as an exclusive zone. |
+| `dockSide` | string | `"bottom"` | `dock-settings.json` | Screen edge the dock sits on: `"bottom"`, `"left"` or `"right"`. |
 | `screen` | string | `""` | `dock-settings.json` | Monitor the dock (and the Alt+Tab switcher) appears on: an output name from `hyprctl monitors` such as `"DP-2"`, or `"focused"` to follow the focused monitor. Empty, or an output that is not connected, uses the first screen. |
+| `iconSize` | int | `54` | `dock-settings.json` | Icon size in pixels, from 32 to 96. The dock height, slots, spacing, padding, corner radius, hover reach and launch bounce all scale with it. A number or numeric string is rounded, then clamped to the range; anything else uses the default. Written only when it is not the default. |
+| `magnification` | number | `1.36` | `dock-settings.json` | Scale of the icon under the pointer, from 1.0 (no magnification) to 2.0. A number or numeric string is clamped to the range; anything else uses the default. Written only when it is not the default. |
+| `bounce` | bool | `true` | `dock-settings.json` | Bounce an app's icon when the app opens. Accepts `true`/`false` or the strings `"true"`/`"false"`; anything else uses the default. Written only when it is not the default. |
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
 | `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
 | custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
@@ -251,13 +259,19 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 | `altTabNext` | — | Next application in the switcher |
 | `altTabPrev` | — | Previous application in the switcher |
 | `altTabCancel` | — | Dismiss the switcher without changing focus |
+| `hideActive` | — | Hide the focused window (bind it to a key, e.g. `SUPER + H`) |
+| `hideApp` | app id | Hide every window of an app, like the menu's "Hide" |
+| `activateApp` | app id | Like clicking the dock icon: focus, unhide, or launch |
+| `activateWindow` | window address | Like clicking a preview card: focus or unhide one window |
 
 ### Built-in constants (not configurable)
 
 - Timing: 1000ms idle hide delay, 100ms edge-reveal delay, 380ms hide / 280ms
   show animation, 180ms window-preview delay, 300ms persist debounce
-- Geometry: dock height 101px, bottom margin 8px, icon size 50px, slot width
-  58px, slot spacing 8px, side padding 18px, hover scale 1.36, corner radius 18
+- Geometry: the stock dock has a 54px icon in a 78px dock, 60px slots, 6px
+  spacing, 12px side padding, a 96px hover reach and an 18px corner radius.
+  Every one of these scales with `iconSize`. The 4px margin to the screen edge
+  stays fixed
 - Edge trigger: bottom 3px of the screen
 
 ### Full default config file
@@ -267,7 +281,21 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 ```json
 {
   "version": 1,
-  "autoHide": true
+  "autoHide": true,
+  "dockSide": "bottom"
+}
+```
+
+A dock with larger icons, stronger magnification and no launch bounce:
+
+```json
+{
+  "version": 1,
+  "autoHide": true,
+  "dockSide": "bottom",
+  "iconSize": 72,
+  "magnification": 1.6,
+  "bounce": false
 }
 ```
 
