@@ -49,8 +49,6 @@ Item {
       border.width: 0
       opacity: dock.menuOpen || dock.pickerOpen || dock.dockHovered ? 1 : 0.92
 
-      Behavior on x { NumberAnimation { duration: dock.autoHidden ? dock.hideDuration : dock.showDuration; easing.type: Easing.OutCubic } }
-      Behavior on y { NumberAnimation { duration: dock.autoHidden ? dock.hideDuration : dock.showDuration; easing.type: Easing.OutCubic } }
       Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
       Behavior on height { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
       Behavior on opacity { NumberAnimation { duration: 160 } }

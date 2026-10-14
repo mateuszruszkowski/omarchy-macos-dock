@@ -112,25 +112,38 @@ Item {
   // gap between dockSurface bottom (H-8) and edge strip (H-3).
   property bool dockEngaged: root.dockHovered || root.edgeHovered
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
-  // this flag drives the bottomMargin translation so the glide is animated.
-  property bool autoHidden: false
+  // this flag drives hideShift, the only animated part of the dock's
+  // position. It starts hidden, so a new dock appears only on edge hover.
+  property bool autoHidden: true
   readonly property int dockHeight: root.metrics.dockHeight
   property int bottomMargin: 4
   // Dock geometry is computed in screen coordinates (dockWindow fills the
   // screen) instead of conditional anchors. Switching sides cannot leave a
   // stale anchor competing with a new one, which otherwise pinned the dock to
   // top-center and inflated the edge hot-zone to full screen.
+  //
+  // Only the auto-hide slide animates. x and y follow the window at once:
+  // when the dock moves to another output, or its surface is re-created, the
+  // window passes through other sizes before it gets the new screen's, and
+  // animating x/y slid the dock across the screen from those. The settings
+  // read at startup set the initial state, so they apply without a slide.
   property real hideShift: (root.autoHide && root.autoHidden) ? root.bottomMargin + root.dockHeight - root.peekPx : 0
+  Behavior on hideShift {
+    enabled: root.settingsLoaded
+    NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+  }
   property real surfaceWidth: root.vertical ? root.dockHeight : root.layoutWidth
   property real surfaceHeight: root.vertical ? root.layoutWidth : root.dockHeight
+  // Placed by dockSurface's animated size, so the dock stays centered and
+  // against its edge while it grows or shrinks.
   property real surfaceX: {
     if (root.dockSide === "left") return root.bottomMargin - root.hideShift
-    if (root.dockSide === "right") return dockWindow.width - root.surfaceWidth - root.bottomMargin + root.hideShift
-    return (dockWindow.width - root.surfaceWidth) / 2
+    if (root.dockSide === "right") return dockWindow.width - dockSurface.width - root.bottomMargin + root.hideShift
+    return (dockWindow.width - dockSurface.width) / 2
   }
   property real surfaceY: {
-    if (root.dockSide === "bottom") return dockWindow.height - root.surfaceHeight - root.bottomMargin + root.hideShift
-    return (dockWindow.height - root.surfaceHeight) / 2
+    if (root.dockSide === "bottom") return dockWindow.height - dockSurface.height - root.bottomMargin + root.hideShift
+    return (dockWindow.height - dockSurface.height) / 2
   }
   // Persisted in dock-settings.json. Every dock length follows iconSize.
   property int iconSize: DockModel.DEFAULT_SETTINGS.iconSize
@@ -1505,9 +1518,7 @@ Item {
     printErrors: false
     onLoaded: {
       var parsed = DockModel.parseSettings(text())
-      if (!root.settingsLoaded) {
-        root.settingsLoaded = true
-      } else {
+      if (root.settingsLoaded) {
         if (!DockModel.shouldReprocessSettings(text())) return
         // Remember what was applied, not only what the dock last wrote, so an
         // edit back to an earlier value is not mistaken for our own write.
@@ -1516,14 +1527,15 @@ Item {
       root.applySettings(parsed)
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
+      root.settingsLoaded = true
     }
     onFileChanged: {
       if (Date.now() < root.settingsWriteUntil) return
       settingsFile.reload()
     }
     onLoadFailed: {
-      root.settingsLoaded = true
       root.applySettings(DockModel.DEFAULT_SETTINGS)
+      root.settingsLoaded = true
     }
   }
 
@@ -1756,12 +1768,6 @@ Item {
       // glass pill instead of a brighter top. Removed the previous 0.10 bar
       // that made the top brighter than left/right/bottom.
 
-      Behavior on x {
-        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
-      }
-      Behavior on y {
-        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
-      }
       Behavior on width {
         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
       }
