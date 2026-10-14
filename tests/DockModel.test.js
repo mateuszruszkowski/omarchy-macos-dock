@@ -6,18 +6,11 @@ const vm = require("node:vm")
 function loadQmlJs(path) {
   const source = fs.readFileSync(path, "utf8").replace(/^\.pragma library\s*/, "")
   const context = { module: { exports: {} }, console }
-  // Provide a minimal Qt mock so Qt.include works under Node.js.
-  context.Qt = {
-    include: (includePath) => {
-      const incSource = fs.readFileSync(includePath, "utf8").replace(/^\.pragma library\s*/, "")
-      vm.runInNewContext(incSource, context, { filename: includePath })
-    }
-  }
   vm.runInNewContext(source, context, { filename: path })
   return context.module.exports
 }
 
-const model = loadQmlJs("DockModel.js")
+const model = loadQmlJs("DockModelBase.js")
 
 test("parses and normalizes pinned ids", () => {
   assert.deepEqual(Array.from(model.parsePinned('{"pinned":["code.desktop","code","ghostty"]}')), ["code", "ghostty"])

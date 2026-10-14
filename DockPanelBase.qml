@@ -4,7 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
-import "DockModel.js" as DockModel
+import "DockModelBase.js" as DockModel
 import "IconResolver.js" as IconResolver
 
 Item {
@@ -114,8 +114,8 @@ Item {
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
   property bool autoHidden: false
-  property int dockHeight: 101
-  property int bottomMargin: 8
+  property int dockHeight: 78
+  property int bottomMargin: 4
   // Dock geometry is computed in screen coordinates (dockWindow fills the
   // screen) instead of conditional anchors. Switching sides cannot leave a
   // stale anchor competing with a new one, which otherwise pinned the dock to
@@ -132,7 +132,7 @@ Item {
     if (root.dockSide === "bottom") return dockWindow.height - root.surfaceHeight - root.bottomMargin + root.hideShift
     return (dockWindow.height - root.surfaceHeight) / 2
   }
-  property int iconSize: 50
+  property int iconSize: 54
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
   property var tooltipItem: null
@@ -163,10 +163,8 @@ Item {
   // applyLayout(), which only mutates existing delegates, so no delegate is
   // ever torn down by dragging. Mutable pinned/running state lives in each
   // delegate's liveData binding so state changes never rebuild the Repeater.
-  property int slotWidth: 58
-  property int slotSpacing: 8
-  property int sidePadding: 18
-  property int separatorWidth: 14
+  property int slotWidth: 60
+  property int sidePadding: 12
   property string floatingId: ""
   property var tempDrag: ({ id: "", index: -1 })
   property var placements: ({})

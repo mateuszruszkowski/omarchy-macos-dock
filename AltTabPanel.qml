@@ -2,7 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
-import "DockModel.js" as DockModel
+import "DockModelBase.js" as DockModel
 
 // macOS-style app switcher HUD. The UI is a mirror image of the dock itself
 // (same glass surface, same icons) scaled up 30%, with the running dots,
