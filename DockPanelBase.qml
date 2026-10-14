@@ -391,28 +391,6 @@ Item {
     return raw
   }
 
-  function hyprlandWindowFor(window) {
-    var targetId = String(window.appId || window.desktopId || window.className || window.initialClass || "").toLowerCase()
-    var targetTitle = String(window.title || "")
-    var fallback = null
-    try {
-      var values = Hyprland.toplevels.values
-      for (var i = 0; i < values.length; i++) {
-        var candidate = values[i]
-        var ids = []
-        if (candidate.wayland && candidate.wayland.appId) ids.push(String(candidate.wayland.appId).toLowerCase())
-        var ipc = candidate.lastIpcObject || {}
-        if (ipc.appId) ids.push(String(ipc.appId).toLowerCase())
-        if (ipc["class"]) ids.push(String(ipc["class"]).toLowerCase())
-        if (ipc.initialClass) ids.push(String(ipc.initialClass).toLowerCase())
-        if (ids.indexOf(targetId) === -1) continue
-        if (targetTitle && candidate.title === targetTitle) return candidate
-        if (!fallback) fallback = candidate
-      }
-    } catch (error) {}
-    return fallback
-  }
-
   function hyprlandWindowForItem(item) {
     if (!item) return null
     var fallback = null
