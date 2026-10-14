@@ -1968,6 +1968,7 @@ Item {
     screen: root.resolveScreen()
     autoHideEnabled: root.autoHide
     dockSide: root.dockSide
+    pinned: !!dockMenu.itemData && DockModel.isPinned(root.pinnedIds, dockMenu.itemData.id)
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false

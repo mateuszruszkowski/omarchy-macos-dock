@@ -96,6 +96,17 @@ test("acceptance: pin keeps position, survives restart, unpin removes", () => {
   assert.deepEqual(Array.from(dockOrder), ["firefox", "terminal", "vscode", "spotify"])
 })
 
+test("isPinned reads the pinned list, matching ids with or without .desktop", () => {
+  assert.equal(model.isPinned(["firefox", "kitty"], "kitty"), true)
+  assert.equal(model.isPinned(["firefox"], "firefox.desktop"), true)
+  assert.equal(model.isPinned(["firefox"], "kitty"), false)
+  assert.equal(model.isPinned([], "firefox"), false)
+  assert.equal(model.isPinned(undefined, "firefox"), false)
+  const pinned = model.togglePinned(["firefox"], "kitty")
+  assert.equal(model.isPinned(pinned, "kitty"), true)
+  assert.equal(model.isPinned(model.togglePinned(pinned, "kitty"), "kitty"), false)
+})
+
 test("toggles and reorders pins", () => {
   assert.deepEqual(Array.from(model.togglePinned(["a"], "b")), ["a", "b"])
   assert.deepEqual(Array.from(model.togglePinned(["a", "b"], "a")), ["b"])
