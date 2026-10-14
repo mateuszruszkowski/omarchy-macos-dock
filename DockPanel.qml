@@ -43,7 +43,7 @@ Item {
       y: dock.surfaceY
       width: dock.surfaceWidth
       height: dock.surfaceHeight
-      radius: 18
+      radius: dock.metrics.cornerRadius
       color: "transparent"
       border.color: "transparent"
       border.width: 0

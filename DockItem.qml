@@ -7,7 +7,7 @@ Item {
   id: root
 
   required property var itemData
-  property int iconSize: 52
+  required property int iconSize
   property string dockSide: "bottom"
   // Targets driven by the panel's layout engine. Every change is animated so
   // nothing ever teleports.
@@ -23,7 +23,7 @@ Item {
   // macOS-style launch bounce: isolated vertical offset added on top of the
   // hover lift so magnification/scale are never disturbed. Spring-like damped
   // motion (explicit decaying keyframes, ~950ms total, 3 upward impulses).
-  property real launchBounceHeight: 28
+  required property real launchBounceHeight
   property real bounceOffset: 0
   signal launchBounceFinished()
 
@@ -33,9 +33,6 @@ Item {
   signal itemRightClicked(var itemData, point position)
   signal tooltipRequested(var itemData, bool visible, point center)
   signal hoverPointerChanged(var itemData, bool inside, point position)
-
-  width: iconSize + 8
-  height: iconSize + 18
 
   function iconSource() {
     if (root.iconSourceOverride) return root.iconSourceOverride

@@ -114,7 +114,7 @@ Item {
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
   property bool autoHidden: false
-  property int dockHeight: 78
+  readonly property int dockHeight: root.metrics.dockHeight
   property int bottomMargin: 4
   // Dock geometry is computed in screen coordinates (dockWindow fills the
   // screen) instead of conditional anchors. Switching sides cannot leave a
@@ -132,7 +132,12 @@ Item {
     if (root.dockSide === "bottom") return dockWindow.height - root.surfaceHeight - root.bottomMargin + root.hideShift
     return (dockWindow.height - root.surfaceHeight) / 2
   }
-  property int iconSize: 54
+  // Persisted in dock-settings.json. Every dock length follows iconSize.
+  property int iconSize: DockModel.DEFAULT_SETTINGS.iconSize
+  property real magnification: DockModel.DEFAULT_SETTINGS.magnification
+  property bool bounce: DockModel.DEFAULT_SETTINGS.bounce
+  readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical)
+  onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
   property var tooltipItem: null
@@ -163,8 +168,6 @@ Item {
   // applyLayout(), which only mutates existing delegates, so no delegate is
   // ever torn down by dragging. Mutable pinned/running state lives in each
   // delegate's liveData binding so state changes never rebuild the Repeater.
-  property int slotWidth: 60
-  property int sidePadding: 12
   property string floatingId: ""
   property var tempDrag: ({ id: "", index: -1 })
   property var placements: ({})
@@ -180,7 +183,7 @@ Item {
   // Drop-inside state, tracked per-frame in onDragMoved from the cursor's
   // dockSurface-local position. Mapping item-to-item inside the same window
   // avoids the PanelWindow's output-anchored scene space entirely, so the
-  // check is a plain AABB against the surface the input mask hit-tests.
+  // check is a plain AABB against the visible dock surface.
   property bool dragInsideDock: true
   // macOS-style launch bounce (one-shot, vertical only). Triggered purely by
   // the NOT RUNNING -> RUNNING transition in refreshItems(), so the bounce
@@ -265,7 +268,14 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide, screen: root.screenName })
+    var content = DockModel.serializeSettings({
+      autoHide: root.autoHide,
+      dockSide: root.dockSide,
+      screen: root.screenName,
+      iconSize: root.iconSize,
+      magnification: root.magnification,
+      bounce: root.bounce
+    })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -273,6 +283,17 @@ Item {
     // old manual .tmp + Process dance never completed the rename, leaving the
     // on-disk file stale and snapping the dock back to bottom/center on reload).
     settingsFile.setText(content)
+  }
+
+  // dockSide goes last: onDockSideChanged saves the settings and would
+  // otherwise write the previous values of the others back to disk.
+  function applySettings(settings) {
+    root.autoHide = settings.autoHide
+    if (root.screenName !== settings.screen) root.screenName = settings.screen
+    root.iconSize = settings.iconSize
+    root.magnification = settings.magnification
+    root.bounce = settings.bounce
+    if (root.dockSide !== settings.dockSide) root.dockSide = settings.dockSide
   }
 
   onDockSideChanged: {
@@ -567,6 +588,7 @@ Item {
   // opens (NOT RUNNING -> RUNNING). The animation always runs to completion;
   // `running` is only the launch detector, never a stop signal.
   function triggerLaunchBounce(id) {
+    if (!root.bounce) return
     if (!id || id === "__phantom__") return
     if (id === root.floatingId) return
     // No visible surface, no bounce: when auto-hide has slid the dock
@@ -636,7 +658,7 @@ Item {
     var cursorX = root.cursorXInRow()
     var baseFlow = DockModel.buildFlow(root.dockOrder, [], root.floatingId, -1)
     if (root.floatingId && cursorX >= 0)
-      root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, DockModel.LAYOUT_OPTS)
+      root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, root.metrics)
     var mainFlow = DockModel.buildFlow(
       root.dockOrder,
       [],
@@ -644,7 +666,7 @@ Item {
       root.floatingId ? root.tempDrag.index : -1
     )
     var fullFlow = mainFlow.slice()
-    var result = DockModel.computeLayout(fullFlow, cursorX, DockModel.LAYOUT_OPTS)
+    var result = DockModel.computeLayout(fullFlow, cursorX, root.metrics)
     root.placements = result.placements
     root.layoutWidth = result.totalWidth
     for (var id in result.placements) {
@@ -982,10 +1004,8 @@ Item {
     var id = item.id
     if (!root.floatingId) return
     // `dragInsideDock` is tracked per-frame in onDragMoved from the cursor's
-    // dockSurface-local position — the same surface the input mask
-    // (Region { item: dockSurface }) hit-tests — so a drop is judged against
-    // exactly what received the drag instead of a coordinate mapping
-    // re-derived at release time.
+    // dockSurface-local position, so a drop is judged against the visible
+    // dock instead of a coordinate mapping re-derived at release time.
     var inside = root.dragInsideDock
     console.log("macos.dock finishDrag", JSON.stringify({ id: id, inside: inside, localX: surfacePosition.x, localY: surfacePosition.y, surfaceW: dockSurface.width, surfaceH: dockSurface.height, cursorX: root.cursorXInRow() }))
     var wasPinned = root.pinnedIds.indexOf(id) !== -1
@@ -1009,7 +1029,7 @@ Item {
         // instantly at full opacity exactly where the ghost was, and applyLayout
         // then assigns the identical x, so no spring runs.
         var dropFlow = DockModel.buildFlow(newOrder, [], "", -1)
-        var dropResult = DockModel.computeLayout(dropFlow, root.cursorXInRow(), DockModel.LAYOUT_OPTS)
+        var dropResult = DockModel.computeLayout(dropFlow, root.cursorXInRow(), root.metrics)
         var dropP = dropResult.placements[id]
         var dropDelegate = root.delegateById[id]
         if (dropP && dropDelegate) {
@@ -1446,21 +1466,16 @@ Item {
     atomicWrites: true
     printErrors: false
     onLoaded: {
-      var parsed = DockModel.parseSettings(text(), { autoHide: true, dockSide: "bottom" })
+      var parsed = DockModel.parseSettings(text())
       if (!root.settingsLoaded) {
         root.settingsLoaded = true
-        root.autoHide = parsed.autoHide
       } else {
         if (!DockModel.shouldReprocessSettings(text())) return
         // Remember what was applied, not only what the dock last wrote, so an
         // edit back to an earlier value is not mistaken for our own write.
         DockModel.markSettingsWritten(text())
-        root.autoHide = parsed.autoHide
       }
-      // Set screenName before dockSide: onDockSideChanged saves the settings
-      // and would otherwise write the previous screen back to disk.
-      if (root.screenName !== parsed.screen) root.screenName = parsed.screen
-      if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
+      root.applySettings(parsed)
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
     }
@@ -1470,9 +1485,7 @@ Item {
     }
     onLoadFailed: {
       root.settingsLoaded = true
-      root.autoHide = true
-      root.screenName = ""
-      root.dockSide = "bottom"
+      root.applySettings(DockModel.DEFAULT_SETTINGS)
     }
   }
 
@@ -1655,7 +1668,38 @@ Item {
     // 0.50 alpha tint below is deliberately the only "glass" effect; no
     // compositor backdrop blur is requested for this namespace or for
     // "macos-dock-material" in DockPanel.qml, which shares this geometry.
-    mask: Region { item: dockSurface }
+    mask: Region { item: dockHitArea }
+
+    // The input region: the dock surface, grown toward the screen interior by
+    // how far a magnified icon reaches past it. Only while hovered, so an idle
+    // dock leaves no dead click zone above it. Declared before dockSurface so
+    // the icons stay on top of its mouseArea.
+    Item {
+      id: dockHitArea
+      readonly property real reach: root.dockHovered ? root.metrics.overhang : 0
+      x: root.dockSide === "right" ? dockSurface.x - reach : dockSurface.x
+      y: root.dockSide === "bottom" ? dockSurface.y - reach : dockSurface.y
+      width: dockSurface.width + (root.vertical ? reach : 0)
+      height: dockSurface.height + (root.vertical ? 0 : reach)
+
+      MouseArea {
+        id: mouseArea
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        hoverEnabled: true
+        onExited: {
+          root.maybeScheduleHide()
+        }
+        onPositionChanged: {
+          var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
+          root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
+          root.applyLayout()
+        }
+        onClicked: function(mouse) {
+          if (mouse.button === Qt.RightButton) root.openIconManager()
+        }
+      }
+    }
 
     Rectangle {
       id: dockSurface
@@ -1663,7 +1707,7 @@ Item {
       y: root.surfaceY
       width: root.surfaceWidth
       height: root.surfaceHeight
-      radius: 18
+      radius: root.metrics.cornerRadius
       color: Util.alpha(Color.background, 0.50)
       border.color: Util.alpha(Color.foreground, 0.04)
       border.width: 1
@@ -1691,9 +1735,9 @@ Item {
       Item {
         id: dockRow
         anchors.centerIn: parent
-        anchors.verticalCenterOffset: 6
-        width: root.layoutWidth - 2 * root.sidePadding
-        height: 70
+        anchors.verticalCenterOffset: root.metrics.rowOffset
+        width: root.layoutWidth - 2 * root.metrics.sidePadding
+        height: root.metrics.rowHeight
         // Left/right docks reuse the horizontal layout engine: the row is
         // rotated -90° so the x-axis becomes screen-y (first item on top) and
         // each wrapper counter-rotates +90° to keep icons upright.
@@ -1714,8 +1758,8 @@ Item {
             // The wrapper spans the scaled slot so the centered icon sits at
             // the slot's visual center — a single magnified icon stays
             // centered in the dock instead of drifting left.
-            width: root.slotWidth * targetScale
-            height: 70
+            width: root.metrics.slotWidth * targetScale
+            height: root.metrics.rowHeight
             x: 0
             rotation: root.vertical ? 90 : 0
             property bool animating: false
@@ -1766,6 +1810,9 @@ Item {
               anchors.centerIn: parent
               itemData: wrapper.liveData
               iconSize: root.iconSize
+              width: root.metrics.itemWidth
+              height: root.metrics.itemHeight
+              launchBounceHeight: root.metrics.bounceHeight
               dockSide: root.dockSide
               animationEnabled: wrapper.animating
               iconSourceOverride: root.iconSourceFor(modelData)
@@ -1800,37 +1847,18 @@ Item {
         }
 
       }
-
-      MouseArea {
-        id: mouseArea
-        anchors.fill: parent
-        z: -1
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
-        hoverEnabled: true
-        onExited: {
-          root.maybeScheduleHide()
-        }
-        onPositionChanged: {
-          var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
-          root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
-          root.applyLayout()
-        }
-        onClicked: function(mouse) {
-          if (mouse.button === Qt.RightButton) root.openIconManager()
-        }
-      }
     }
 
     Rectangle {
       visible: root.tooltipVisible && root.tooltipItem !== null
       z: 20
       x: {
-        if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8
-        if (root.vertical) return dockSurface.x - width - 8
+        if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8 + root.metrics.clearance
+        if (root.vertical) return dockSurface.x - width - 8 - root.metrics.clearance
         return Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
       }
       y: {
-        if (!root.vertical) return dockSurface.y - height - 8
+        if (!root.vertical) return dockSurface.y - height - 8 - root.metrics.clearance
         return Math.max(12, Math.min(root.tooltipCenterX - height / 2, parent.height - height - 12))
       }
       width: tooltipText.implicitWidth + 20
@@ -1872,7 +1900,7 @@ Item {
       width: root.vertical ? 18 : parent.width
       height: root.vertical ? parent.height : 18
       hoverEnabled: true
-      // Hover here is already covered by the full dockSurface mouseArea
+      // Hover here is already covered by the dockHitArea mouseArea
       // (containsMouse) and by icon hover (hoveredItemId). No manual
       // dockHovered needed — the binding handles it.
       onExited: root.clearHover()
@@ -2013,6 +2041,7 @@ Item {
     dockY: root.surfaceY
     dockW: root.surfaceWidth
     dockH: root.surfaceHeight
+    clearance: root.metrics.clearance
     iconSourceFor: function(data) { return root.iconSourceFor({ id: root.previewAppId }) }
     thumbnailFor: function(data) { return root.thumbnailFor(data) }
     onActivated: function(data) { if (data) root.activateWindow(data.address) }
