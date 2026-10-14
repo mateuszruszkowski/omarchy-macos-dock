@@ -155,17 +155,24 @@ Item {
   // "wave" | "zoom" | "none", see DockModel.HOVER_EFFECTS. Persisted in
   // dock-settings.json.
   property string hoverEffect: DockModel.DEFAULT_SETTINGS.hoverEffect
-  // Everything dock-settings.json holds, as saved and as the menu shows it.
-  readonly property var settings: ({
-    autoHide: root.autoHide,
-    dockSide: root.dockSide,
-    screen: root.screenName,
-    iconSize: root.iconSize,
-    magnification: root.magnification,
-    bounce: root.bounce,
-    rightClick: root.rightClick,
-    hoverEffect: root.hoverEffect
-  })
+  // Everything dock-settings.json holds. Saving reads the properties through
+  // this function, not the `settings` binding: a handler such as
+  // onDockSideChanged runs before that binding catches up and would save the
+  // previous side.
+  function currentSettings() {
+    return {
+      autoHide: root.autoHide,
+      dockSide: root.dockSide,
+      screen: root.screenName,
+      iconSize: root.iconSize,
+      magnification: root.magnification,
+      bounce: root.bounce,
+      rightClick: root.rightClick,
+      hoverEffect: root.hoverEffect
+    }
+  }
+  // The settings as the menu shows them.
+  readonly property var settings: root.currentSettings()
   readonly property var metrics: DockModel.dockMetrics(root.iconSize, root.magnification, root.vertical, root.hoverEffect)
   onMetricsChanged: root.applyLayout()
   property real hoveredMouseX: -1
@@ -298,7 +305,7 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings(root.settings)
+    var content = DockModel.serializeSettings(root.currentSettings())
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -962,7 +969,7 @@ Item {
   }
 
   function menuAction(action, item) {
-    var chosen = DockModel.applySettingAction(root.settings, action)
+    var chosen = DockModel.applySettingAction(root.currentSettings(), action)
     if (chosen) {
       root.applySettings(chosen)
       root.saveSettings()
