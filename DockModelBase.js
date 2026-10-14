@@ -4,16 +4,6 @@ var DEFAULT_PINNED = []
 
 var lastWrittenHash = null
 
-var LAYOUT_OPTS = {
-    slotWidth: 60,
-    spacing: 6,
-    iconSize: 54,
-    hoverScale: 1.36,
-    radius: 96,
-    sidePadding: 12,
-    separatorWidth: 12
-}
-
 function normalizeId(value) {
     var id = String(value || "").trim()
     return id.endsWith(".desktop") ? id.slice(0, -8) : id
@@ -419,8 +409,19 @@ function markWritten(content) { lastWrittenHash = hashContent(content) }
 
 function resetWrittenGuard() { lastWrittenHash = null }
 
-// ---- Dock settings (auto-hide, placement) ------------------------------
+// ---- Dock settings (dock-settings.json) ----------------------------------
 var lastSettingsHash = null
+
+var DEFAULT_SETTINGS = {
+    autoHide: true,
+    dockSide: "bottom",
+    screen: "",
+    iconSize: 54,
+    magnification: 1.36,
+    bounce: true
+}
+var ICON_SIZE_RANGE = [32, 96]
+var MAGNIFICATION_RANGE = [1, 2]
 
 function normalizeSide(side) {
     var s = String(side || "bottom").toLowerCase()
@@ -451,22 +452,44 @@ function pickScreenName(names, want, focusedName, currentName, frozen) {
     return list.length > 0 ? list[0] : ""
 }
 
+// A finite number or a non-empty numeric string as a number; NaN otherwise.
+function settingNumber(value) {
+    if (typeof value === "number") return value
+    if (typeof value === "string" && value.trim()) return Number(value)
+    return NaN
+}
+
+function clamp(value, range) {
+    return Math.min(range[1], Math.max(range[0], value))
+}
+
+// Every recognized key of `source` over `base`. A value of the wrong type
+// keeps the base value, so one bad key never resets the others.
+function overlaySettings(base, source) {
+    var out = {}
+    for (var key in DEFAULT_SETTINGS) out[key] = base[key]
+    if (typeof source.autoHide === "boolean") out.autoHide = source.autoHide
+    else if (typeof source.autoHide === "string") out.autoHide = source.autoHide === "true"
+    if (source.dockSide !== undefined) out.dockSide = normalizeSide(source.dockSide)
+    if (source.screen !== undefined) out.screen = normalizeScreen(source.screen)
+    var size = settingNumber(source.iconSize)
+    if (isFinite(size)) out.iconSize = clamp(Math.round(size), ICON_SIZE_RANGE)
+    var magnification = settingNumber(source.magnification)
+    if (isFinite(magnification)) out.magnification = clamp(magnification, MAGNIFICATION_RANGE)
+    if (typeof source.bounce === "boolean") out.bounce = source.bounce
+    else if (source.bounce === "true" || source.bounce === "false") out.bounce = source.bounce === "true"
+    return out
+}
+
 function parseSettings(text, fallback) {
-    var defaults = fallback || { autoHide: true, dockSide: "bottom" }
-    var baseSide = normalizeSide(defaults.dockSide)
-    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide, screen: normalizeScreen(defaults.screen) }
+    var base = overlaySettings(DEFAULT_SETTINGS, fallback || {})
     var source = String(text || "").trim()
     if (!source) return base
     try {
         var parsed = JSON.parse(source)
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
             return base
-        var out = { autoHide: base.autoHide, dockSide: base.dockSide, screen: base.screen }
-        if (typeof parsed.autoHide === "boolean") out.autoHide = parsed.autoHide
-        else if (typeof parsed.autoHide === "string") out.autoHide = parsed.autoHide === "true"
-        if (parsed.dockSide !== undefined) out.dockSide = normalizeSide(parsed.dockSide)
-        if (parsed.screen !== undefined) out.screen = normalizeScreen(parsed.screen)
-        return out
+        return overlaySettings(base, parsed)
     } catch (error) {
         return base
     }
@@ -478,6 +501,10 @@ function serializeSettings(settings) {
     var out = { version: 1, autoHide: value, dockSide: side }
     var screen = normalizeScreen(settings && settings.screen)
     if (screen) out.screen = screen
+    // Written only when chosen, so an unset key follows the default.
+    ;["iconSize", "magnification", "bounce"].forEach(function(key) {
+        if (settings && settings[key] !== DEFAULT_SETTINGS[key]) out[key] = settings[key]
+    })
     return JSON.stringify(out, null, 2) + "\n"
 }
 
@@ -488,6 +515,53 @@ function shouldReprocessSettings(content) {
 function markSettingsWritten(content) { lastSettingsHash = hashContent(content) }
 
 function resetSettingsGuard() { lastSettingsHash = null }
+
+// ---- Dock geometry --------------------------------------------------------
+// Every length of the dock at the stock 54px icon; dockMetrics scales them
+// all with the icon size. radius is the hover reach computeLayout reads.
+var STOCK_METRICS = {
+    iconSize: 54,
+    slotWidth: 60,
+    spacing: 6,
+    sidePadding: 12,
+    separatorWidth: 12,
+    radius: 96,
+    dockHeight: 78,
+    rowHeight: 70,
+    rowOffset: 6,
+    cornerRadius: 18,
+    itemWidth: 62,
+    itemHeight: 72,
+    bounceHeight: 28
+}
+
+// How far a fully magnified icon reaches past the dock's inner edge. A bottom
+// dock centers each item at dockHeight / 2 + rowOffset and scales it from its
+// bottom edge; a side dock centers it across the dock and scales it from the
+// screen edge.
+function magnifiedOverhang(lengths, magnification, vertical) {
+    var reach = vertical
+        ? lengths.itemWidth * (magnification - 0.5) - lengths.dockHeight / 2
+        : lengths.itemHeight * (magnification - 0.5) - lengths.dockHeight / 2 - lengths.rowOffset
+    return Math.max(0, Math.ceil(reach))
+}
+
+// The dock's lengths for one icon size, in whole pixels, also usable as
+// computeLayout/insertionIndexFor opts. clearance is how much further the
+// magnified icon reaches than in the stock dock: popups beside the dock move
+// out by that much, so the stock dock looks exactly as before.
+function dockMetrics(iconSize, magnification, vertical) {
+    var out = {}
+    var factor = iconSize / STOCK_METRICS.iconSize
+    for (var key in STOCK_METRICS) out[key] = Math.round(STOCK_METRICS[key] * factor)
+    out.hoverScale = magnification
+    out.overhang = magnifiedOverhang(out, magnification, vertical)
+    var stock = magnifiedOverhang(STOCK_METRICS, DEFAULT_SETTINGS.magnification, vertical)
+    out.clearance = Math.max(0, out.overhang - stock)
+    return out
+}
+
+var LAYOUT_OPTS = dockMetrics(DEFAULT_SETTINGS.iconSize, DEFAULT_SETTINGS.magnification, false)
 
 // ---- Auto-hide state machine (pure, testable) --------------------------
 function shouldHideDock(state) {
@@ -589,11 +663,13 @@ if (typeof module !== "undefined" && module.exports) {
         shouldReprocess: shouldReprocess,
         markWritten: markWritten,
         resetWrittenGuard: resetWrittenGuard,
+        DEFAULT_SETTINGS: DEFAULT_SETTINGS,
         parseSettings: parseSettings,
         serializeSettings: serializeSettings,
         normalizeSide: normalizeSide,
         normalizeScreen: normalizeScreen,
         pickScreenName: pickScreenName,
+        dockMetrics: dockMetrics,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,
