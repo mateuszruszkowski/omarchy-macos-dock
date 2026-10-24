@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Wayland
 import qs.Commons
+import qs.Ui
 
 // A single window card inside the hover preview. Prefer a live compositor
 // capture at the window's native source resolution. The preview card is much
@@ -20,6 +21,10 @@ Item {
   property var captureToplevel: null
 
   signal activated(var windowData)
+  signal closeRequested(string address)
+  signal forceKillRequested(string address)
+
+  Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
   width: 168
   height: 144
@@ -49,6 +54,8 @@ Item {
 
   Rectangle {
     id: card
+    z: 1
+    scale: cardHover.hovered ? 1.05 : 1
     anchors { top: parent.top; left: parent.left; right: parent.right }
     height: 118
     radius: 14
@@ -135,6 +142,56 @@ Item {
       border.width: 1
       border.color: Util.alpha(Color.foreground, 0.10)
     }
+    Repeater {
+      model: 2
+
+      delegate: Rectangle {
+        id: control
+        required property int index
+        readonly property bool force: index === 0
+        readonly property string label: strings.t(force ? "preview.forceKill" : "preview.close")
+        x: force ? 8 : card.width - width - 8
+        y: 8
+        width: 24
+        height: 24
+        radius: 7
+        color: force
+          ? (controlMouse.pressed ? "#a4232e" : controlMouse.containsMouse ? "#ef5360" : "#d63645")
+          : Util.alpha(Color.background, controlMouse.pressed ? 1 : controlMouse.containsMouse ? 0.98 : 0.90)
+        border.width: 1
+        border.color: force ? "#f27880" : Util.alpha(Color.foreground, controlMouse.containsMouse ? 0.55 : 0.28)
+        Accessible.role: Accessible.Button
+        Accessible.name: label
+        Accessible.onPressAction: control.requestAction()
+
+        function requestAction() {
+          var address = root.windowData && root.windowData.address ? root.windowData.address : ""
+          if (force) root.forceKillRequested(address)
+          else root.closeRequested(address)
+        }
+
+        Text {
+          anchors.centerIn: parent
+          text: "×"
+          color: control.force ? "white" : Color.foreground
+          font.pixelSize: 21
+          font.family: Style.font.family
+        }
+
+        MouseArea {
+          id: controlMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: control.requestAction()
+        }
+
+        PanelToolTip {
+          visible: controlMouse.containsMouse
+          text: control.label
+        }
+      }
+    }
   }
 
   Text {
@@ -151,19 +208,13 @@ Item {
     font.pixelSize: Style.font.bodySmall
   }
 
+  HoverHandler { id: cardHover }
+
   MouseArea {
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
 
-    onEntered: {
-      card.scale = 1.05
-      card.z = 1
-    }
-    onExited: {
-      card.scale = 1
-      card.z = 0
-    }
     onClicked: root.activated(root.windowData)
   }
 }

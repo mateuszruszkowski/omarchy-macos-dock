@@ -859,3 +859,33 @@ test("in hide mode right click restores an app whose windows are all hidden", ()
   assert.equal(model.iconClickAction("right", [parked("0xaaa")], "hide"), "restore")
   assert.equal(model.iconClickAction("right", [parked("0xaaa"), parked("0xbbb"), { address: "", workspaceName: "1" }], "hide"), "restore")
 })
+
+test("normalizes exact nonzero hexadecimal window addresses", () => {
+  for (const address of ["AbC123", "0xAbC123", "0X00AbC123"]) {
+    assert.equal(model.normalizeWindowAddress(address), "0xabc123")
+  }
+  assert.equal(model.normalizeWindowAddress("0x123456789abcdef123"), "0x123456789abcdef123")
+})
+
+test("window actions dispatch close and kill to the selected address", () => {
+  assert.equal(model.windowActionDispatch("close", "0X00AbC123"),
+    'hl.dsp.window.close({ window = "address:0xabc123" })')
+  assert.equal(model.windowActionDispatch("kill", "def456"),
+    'hl.dsp.window.kill({ window = "address:0xdef456" })')
+})
+
+test("window actions reject missing, zero, malformed and injected targets", () => {
+  const invalid = [undefined, null, 0, 123, {}, "", "0", "00", "0x0", "0X000", "0x",
+    " 0x123", "0x123 ", "address:0x123", "0x123\n", "0x12g", "-1", "0x1; hl.dsp.exit()",
+    '0x1" }); hl.dsp.window.kill({ window = "active']
+  for (const address of invalid) {
+    assert.equal(model.normalizeWindowAddress(address), "", String(address))
+    assert.equal(model.windowActionDispatch("close", address), "", String(address))
+    assert.equal(model.windowActionDispatch("kill", address), "", String(address))
+  }
+})
+
+test("window actions reject every action outside the close and kill allowlist", () => {
+  for (const action of [undefined, null, "", "Close", "forceKill", "__proto__", "toString", "kill(); hl.dsp.exit()"])
+    assert.equal(model.windowActionDispatch(action, "0x123"), "")
+})

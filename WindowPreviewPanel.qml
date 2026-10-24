@@ -30,6 +30,8 @@ PanelWindow {
   readonly property bool panelActive: root.previewVisible || root.windowList.length > 0
 
   signal activated(var windowData)
+  signal closeRequested(string address)
+  signal forceKillRequested(string address)
   signal previewHoverEntered()
   signal previewHoverExited()
 
@@ -53,6 +55,8 @@ PanelWindow {
         continue
       }
       card.activated.connect(function(data) { root.activated(data) })
+      card.closeRequested.connect(function(address) { root.closeRequested(address) })
+      card.forceKillRequested.connect(function(address) { root.forceKillRequested(address) })
       root.cards.push(card)
     }
   }
@@ -107,8 +111,12 @@ PanelWindow {
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
       cursorShape: Qt.PointingHandCursor
-      onEntered: root.previewHoverEntered()
-      onExited: root.previewHoverExited()
+      HoverHandler {
+        onHoveredChanged: {
+          if (hovered) root.previewHoverEntered()
+          else root.previewHoverExited()
+        }
+      }
     }
   }
 }

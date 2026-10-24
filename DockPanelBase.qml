@@ -477,6 +477,18 @@ Item {
     return null
   }
 
+  function requestWindowAction(action, address) {
+    var target = DockModel.normalizeWindowAddress(address)
+    var dispatch = DockModel.windowActionDispatch(action, target)
+    if (!dispatch) return
+    var values = Hyprland.toplevels.values
+    for (var i = 0; i < values.length; i++) {
+      if (DockModel.normalizeWindowAddress(values[i].address) !== target) continue
+      Hyprland.dispatch(dispatch)
+      return
+    }
+  }
+
   function hideWindows(windows) {
     var dispatches = DockModel.hideDispatches(windows)
     for (var i = 0; i < dispatches.length; i++) Hyprland.dispatch(dispatches[i])
@@ -2110,6 +2122,8 @@ Item {
     iconSourceFor: function(data) { return root.iconSourceFor({ id: root.previewAppId }) }
     thumbnailFor: function(data) { return root.thumbnailFor(data) }
     onActivated: function(data) { if (data) root.activateWindow(data.address) }
+    onCloseRequested: function(address) { root.requestWindowAction("close", address) }
+    onForceKillRequested: function(address) { root.requestWindowAction("kill", address) }
     onPreviewHoverEntered: previewGrace.stop()
     onPreviewHoverExited: previewGrace.restart()
   }

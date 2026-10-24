@@ -1,0 +1,4 @@
+{
+  "preview.close": "Close window normally",
+  "preview.forceKill": "Force quit process. Other windows of the same process may also close."
+}
