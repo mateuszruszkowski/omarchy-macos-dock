@@ -45,6 +45,11 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
   once every window is hidden. Right click on an app that is not running
   still opens its menu, and middle click always does.
 - Right or middle click empty dock space: open the icon manager.
+- On each window preview, the upper-right X requests a normal close. The app
+  can ask to save changes or refuse the request. The white X on red in the
+  upper-left corner forcefully terminates that window's process through
+  Hyprland. Other windows owned by the same process may also close, and
+  unsaved changes can be lost. Both actions target the selected live window.
 
 ## Install
 

@@ -595,6 +595,19 @@ function isHiddenWorkspace(name) {
     return String(name || "").indexOf(HIDDEN_WORKSPACE) === 0
 }
 
+function normalizeWindowAddress(address) {
+    if (typeof address !== "string" || !/^(?:0x)?[0-9a-f]+$/i.test(address)) return ""
+    var hex = address.replace(/^0x/i, "").replace(/^0+/, "").toLowerCase()
+    return hex ? "0x" + hex : ""
+}
+
+function windowActionDispatch(action, address) {
+    if (action !== "close" && action !== "kill") return ""
+    var target = normalizeWindowAddress(address)
+    if (!target) return ""
+    return "hl.dsp.window." + action + "({ window = \"address:" + target + "\" })"
+}
+
 function windowSelector(address) {
     var raw = String(address || "")
     return "address:" + (raw.indexOf("0x") === 0 ? raw : "0x" + raw)
@@ -698,6 +711,8 @@ if (typeof module !== "undefined" && module.exports) {
         shouldRevealDock: shouldRevealDock,
         isHiddenWorkspace: isHiddenWorkspace,
         windowSelector: windowSelector,
+        normalizeWindowAddress: normalizeWindowAddress,
+        windowActionDispatch: windowActionDispatch,
         hideDispatches: hideDispatches,
         activationPlan: activationPlan,
         iconClickAction: iconClickAction
