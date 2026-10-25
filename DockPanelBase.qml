@@ -179,8 +179,6 @@ Item {
   property string hoveredItemId: ""
   property var tooltipItem: null
   property real tooltipCenterX: 0
-  property string pendingFocusTarget: ""
-  property string pendingCursorPosition: ""
   property var pickerReturnItem: null
   property var customIcons: ({})
   property int customIconRevision: 0
@@ -447,14 +445,9 @@ Item {
   }
 
   function focusWindowAddress(address) {
-    if (!address) return
-    // This Omarchy build uses Hyprland's Lua dispatcher syntax. The older
-    // `workspace ...` / `focuswindow ...` strings are parsed as Lua and fail.
-    // Focusing by address also switches to the window's workspace without
-    // going through Toplevel.activate(), which can warp the pointer.
-    root.pendingFocusTarget = DockModel.windowSelector(address)
-    restoreCursorWarps.stop()
-    if (!cursorCaptureProcess.running) cursorCaptureProcess.running = true
+    var target = DockModel.normalizeWindowAddress(address)
+    if (!target) return
+    Hyprland.dispatch("hl.dsp.focus({ window = \"address:" + target + "\" })")
   }
 
   // A window as the hide/restore model reads it. The live workspace beats
@@ -502,13 +495,27 @@ Item {
     if (Hyprland.activeToplevel) root.hideWindows([root.windowRef(Hyprland.activeToplevel)])
   }
 
-  // Focus one of these windows, first bringing them back to the focused
-  // monitor when every one is hidden. Never Toplevel.activate(): it can warp
-  // the cursor. Returns false when there is no window to activate.
-  function activateWindows(windows) {
-    var monitor = Hyprland.focusedMonitor
-    var workspaceId = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
-    var plan = DockModel.activationPlan(windows, workspaceId)
+  function visibleWorkspaceIds() {
+    var ids = []
+    var monitors = Hyprland.monitors.values
+    for (var i = 0; i < monitors.length; i++) {
+      var monitor = monitors[i]
+      if (monitor.activeWorkspace) ids.push(monitor.activeWorkspace.id)
+      var special = (monitor.lastIpcObject || {}).specialWorkspace
+      if (special && special.id && ids.indexOf(special.id) < 0) ids.push(special.id)
+    }
+    return ids
+  }
+
+  function dockWorkspaceId() {
+    var screen = root.resolveScreen()
+    var monitor = screen ? Hyprland.monitorFor(screen) : null
+    return monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+  }
+
+  function activateWindows(windows, workspaceId) {
+    if (workspaceId === undefined) workspaceId = root.dockWorkspaceId()
+    var plan = DockModel.activationPlan(windows, workspaceId, root.visibleWorkspaceIds())
     if (!plan) return false
     for (var i = 0; i < plan.moves.length; i++) Hyprland.dispatch(plan.moves[i])
     root.focusWindowAddress(plan.focus)
@@ -516,9 +523,10 @@ Item {
   }
 
   function activateWindow(address) {
-    root.hidePreview()
+    var workspaceId = root.dockWorkspaceId()
     var window = root.windowRefByAddress(address)
-    if (window) root.activateWindows([window])
+    root.hidePreview()
+    if (window) root.activateWindows([window], workspaceId)
   }
 
   onShellChanged: if (root.shell) root.refreshApps()
@@ -926,43 +934,6 @@ Item {
     root.launchApp(id, label)
   }
 
-  Timer {
-    id: restoreCursorWarps
-    interval: 80
-    onTriggered: {
-      var match = String(root.pendingCursorPosition).match(/(-?\d+)\s*,\s*(-?\d+)/)
-      if (match)
-        Hyprland.dispatch("hl.dsp.cursor.move({ x = " + match[1] + ", y = " + match[2] + " })")
-      root.pendingCursorPosition = ""
-      Quickshell.execDetached(["hyprctl", "eval", "hl.config({ cursor = { no_warps = false } })"])
-    }
-  }
-
-  Process {
-    id: cursorCaptureProcess
-    command: ["hyprctl", "cursorpos"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        root.pendingCursorPosition = text.trim()
-        if (!focusNoWarpProcess.running) focusNoWarpProcess.running = true
-      }
-    }
-  }
-
-  Process {
-    id: focusNoWarpProcess
-    command: ["hyprctl", "eval", "hl.config({ cursor = { no_warps = true } })"]
-    onExited: {
-      if (!root.pendingFocusTarget) return
-      var target = root.pendingFocusTarget
-      root.pendingFocusTarget = ""
-      Hyprland.dispatch("hl.dsp.focus({ window = \"" + target + "\" })")
-      Qt.callLater(function() { Hyprland.dispatch("hl.dsp.window.bring_to_top()") })
-      restoreCursorWarps.restart()
-    }
-  }
-
   function savePinned() {
     var content = DockModel.serializePinned(root.pinnedIds, root.dockOrder)
     root.ownWriteUntil = Date.now() + 2000
@@ -1237,6 +1208,7 @@ Item {
         var ref = root.windowRef(candidate)
         output.push({
           address: ref.address,
+          stableId: String(ipc.stableId || ""),
           workspaceName: ref.workspaceName,
           title: String(candidate.title || ""),
           active: !!(ipc.focused || candidate.focused),
@@ -1253,13 +1225,9 @@ Item {
   }
 
   // Live window thumbnails --------------------------------------------------
-  // grim captures the composited output, so a window that is buried under
-  // another window cannot be captured correctly (the thumbnail would show
-  // whatever is on top). Instead, a thumbnail is captured when a window
-  // becomes active (it is on top then) and cached by address. Previews reuse
-  // the cache; windows without a cached thumbnail are captured on hover as a
-  // best-effort fallback. Windows on other workspaces or hidden windows
-  // that were never active fall back to the icon card.
+  // Capture the window by Hyprland stableId so the thumbnail contains this
+  // window's pixels even when another window covers it. Missing IDs have no
+  // screen-crop fallback; those cards use the live capture or app icon.
   function snapshotWindows() {
     root.currentThumbBatch++
     root.snapshotPending = 0
@@ -1267,18 +1235,20 @@ Item {
     for (var i = 0; i < root.previewWindows.length; i++) {
       var w = root.previewWindows[i]
       if (!w.address) continue
+      if (!w.stableId) continue
       if (root.thumbCache[w.address] || root.inFlightAddrs[w.address]) continue
       // Skip only when we positively know the window cannot be captured.
       if (DockModel.isHiddenWorkspace(w.workspaceName)) continue
       if (w.mapped === false) continue
       if (w.workspaceId !== undefined && w.workspaceId >= 0 && w.workspaceId !== focused) continue
       if (!w.w || !w.h) continue
-      root.captureForSnapshot({ address: w.address, x: w.x, y: w.y, w: w.w, h: w.h })
+      root.captureForSnapshot({ address: w.address, stableId: w.stableId, x: w.x, y: w.y, w: w.w, h: w.h })
     }
     if (root.snapshotPending === 0) root.applyThumbnails()
   }
 
   function captureForSnapshot(job) {
+    if (!job || !job.address || !job.stableId) return
     root.snapshotPending++
     root.inFlightAddrs[job.address] = true
     var proc = captureProcess.createObject(root, {
@@ -1290,7 +1260,7 @@ Item {
   }
 
   function captureActive(info) {
-    if (!info || !info.address) return
+    if (!info || !info.address || !info.stableId) return
     if (root.inFlightAddrs[info.address]) return
     root.inFlightAddrs[info.address] = true
     var proc = captureProcess.createObject(root, {
@@ -1302,12 +1272,12 @@ Item {
   }
 
   function thumbnailCommand(job) {
+    if (!job || !job.stableId) return "false"
     var dir = Util.shellQuote(root.thumbnailDir)
     var target = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png")
     var tmp = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png.tmp")
-    var geometry = job.x + "," + job.y + " " + job.w + "x" + job.h
     return "mkdir -p " + dir
-      + "; grim -g \"" + geometry + "\" - | magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
+      + "; grim -T " + Util.shellQuote(String(job.stableId)) + " - | magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
       + " && mv " + tmp + " " + target
   }
 
@@ -1590,7 +1560,7 @@ Item {
       var ipc = t.lastIpcObject || {}
       var pos = root.array2(ipc.at)
       var size = root.array2(ipc.size)
-      return { address: String(t.address || ""), x: pos[0], y: pos[1], w: size[0], h: size[1] }
+      return { address: String(t.address || ""), stableId: String(ipc.stableId || ""), x: pos[0], y: pos[1], w: size[0], h: size[1] }
     } catch (error) {}
     return null
   }

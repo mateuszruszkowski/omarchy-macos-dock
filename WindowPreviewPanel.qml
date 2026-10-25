@@ -104,18 +104,13 @@ PanelWindow {
       spacing: 10
     }
 
-    MouseArea {
-      id: hoverArea
-      anchors.fill: parent
-      anchors.margins: -12
-      hoverEnabled: true
-      acceptedButtons: Qt.NoButton
+    HoverHandler {
+      margin: 12
+      blocking: false
       cursorShape: Qt.PointingHandCursor
-      HoverHandler {
-        onHoveredChanged: {
-          if (hovered) root.previewHoverEntered()
-          else root.previewHoverExited()
-        }
+      onHoveredChanged: {
+        if (hovered) root.previewHoverEntered()
+        else root.previewHoverExited()
       }
     }
   }

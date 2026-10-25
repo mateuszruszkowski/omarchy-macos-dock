@@ -732,20 +732,17 @@ function hideDispatches(windows) {
     return out
 }
 
-// What activating an app (dock click, Alt+Tab) or one preview window does.
-// A window in view wins, so an app with any visible window behaves as before.
-// Only when every window is hidden do they all come back, to workspaceId (the
-// focused monitor's active workspace). null when there is no window at all,
-// so the caller launches the app instead.
-function activationPlan(windows, workspaceId) {
+function activationPlan(windows, workspaceId, visibleWorkspaceIds) {
     var list = (windows || []).filter(function(w) { return !!w.address })
     if (list.length === 0) return null
+    var visible = visibleWorkspaceIds || []
     for (var i = 0; i < list.length; i++) {
-        if (!isHiddenWorkspace(list[i].workspaceName)) return { moves: [], focus: list[i].address }
+        if (!isHiddenWorkspace(list[i].workspaceName) && visible.indexOf(list[i].workspaceId) >= 0)
+            return { moves: [], focus: list[i].address }
     }
     if (!(workspaceId >= 1)) return { moves: [], focus: "" }
     return {
-        moves: list.map(function(w) { return moveWindowDispatch(w.address, String(workspaceId)) }),
+        moves: [moveWindowDispatch(list[0].address, String(workspaceId))],
         focus: list[0].address
     }
 }

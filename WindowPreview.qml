@@ -46,7 +46,7 @@ Item {
   Component.onCompleted: root.captureToplevel = root.resolveToplevel()
 
   Connections {
-    target: ToplevelManager.toplevels
+    target: Hyprland.toplevels
     function onValuesChanged() {
       root.captureToplevel = root.resolveToplevel()
     }
@@ -91,7 +91,7 @@ Item {
       id: cachedThumbnail
       anchors.fill: parent
       anchors.margins: 8
-      visible: !livePreview.visible && root.thumbnail !== ""
+      visible: !livePreview.hasContent && root.thumbnail !== ""
       source: root.thumbnail
       sourceSize: Qt.size(304, 184)
       fillMode: Image.PreserveAspectCrop
@@ -101,7 +101,7 @@ Item {
     }
 
     Item {
-      visible: !livePreview.visible && !cachedThumbnail.visible
+      visible: !livePreview.hasContent && !cachedThumbnail.visible
       anchors.fill: parent
       anchors.margins: 8
 

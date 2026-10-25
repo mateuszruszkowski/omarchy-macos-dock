@@ -763,7 +763,7 @@ test("desktopIdForWindow prefers exact id over Name fallback", () => {
   assert.equal(model.desktopIdForWindow("unknown-app", entries), "unknown-app")
 })
 
-const shown = (address, workspaceName) => ({ address, workspaceName })
+const shown = (address, workspaceName) => ({ address, workspaceName, workspaceId: Number(workspaceName) })
 const parked = (address) => ({ address, workspaceName: "special:minimized" })
 
 test("hidden state is read from the special:minimized workspace name", () => {
@@ -796,16 +796,15 @@ test("activating an app with no windows returns null so the caller launches", ()
 })
 
 test("activating an app with a visible window focuses it and restores nothing", () => {
-  const plan = model.activationPlan([parked("0xaaa"), shown("0xbbb", "4"), parked("0xccc")], 1)
+  const plan = model.activationPlan([parked("0xaaa"), shown("0xbbb", "4"), parked("0xccc")], 1, [1, 4])
   assert.deepEqual(Array.from(plan.moves), [])
   assert.equal(plan.focus, "0xbbb")
 })
 
-test("activating an app whose windows are all hidden brings them all to the active workspace", () => {
+test("activating an app whose windows are all hidden restores only its selected window", () => {
   const plan = model.activationPlan([parked("0xaaa"), parked("0xbbb")], 3)
   assert.deepEqual(Array.from(plan.moves), [
     'hl.dsp.window.move({ window = "address:0xaaa", workspace = "3", follow = false })',
-    'hl.dsp.window.move({ window = "address:0xbbb", workspace = "3", follow = false })',
   ])
   assert.equal(plan.focus, "0xaaa")
 })
@@ -816,6 +815,24 @@ test("activating one hidden window from its preview restores only that window", 
     'hl.dsp.window.move({ window = "address:0xbbb", workspace = "2", follow = false })',
   ])
   assert.equal(plan.focus, "0xbbb")
+})
+
+test("a preview on an inactive ordinary workspace moves only its selected window to the dock", () => {
+  const plan = model.activationPlan([shown("0xbbb", "4")], 2, [1, 2])
+  assert.deepEqual(plain(plan), {
+    moves: ['hl.dsp.window.move({ window = "address:0xbbb", workspace = "2", follow = false })'],
+    focus: "0xbbb",
+  })
+})
+
+test("app activation prefers a window actually displayed on another monitor", () => {
+  const plan = model.activationPlan([shown("0xaaa", "4"), shown("0xbbb", "3")], 2, [2, 3])
+  assert.deepEqual(plain(plan), { moves: [], focus: "0xbbb" })
+})
+
+test("a displayed special workspace stays on its existing monitor", () => {
+  const plan = model.activationPlan([{ address: "0xaaa", workspaceId: -99, workspaceName: "special:scratchpad" }], 2, [2, -99])
+  assert.deepEqual(plain(plan), { moves: [], focus: "0xaaa" })
 })
 
 test("hidden windows stay put when the focused monitor has no regular workspace", () => {
@@ -888,4 +905,60 @@ test("window actions reject missing, zero, malformed and injected targets", () =
 test("window actions reject every action outside the close and kill allowlist", () => {
   for (const action of [undefined, null, "", "Close", "forceKill", "__proto__", "toString", "kill(); hl.dsp.exit()"])
     assert.equal(model.windowActionDispatch(action, "0x123"), "")
+})
+
+test("preview routing captures the dock monitor before closing and moves only its selected window", () => {
+  const source = fs.readFileSync("DockPanelBase.qml", "utf8")
+  const names = ["visibleWorkspaceIds", "dockWorkspaceId", "activateWindows", "activateWindow"]
+  const functions = names.map((name) => {
+    const match = source.match(new RegExp("^  function " + name + "\\([^]*?\\n  \\}", "m"))
+    assert.ok(match, `QML function ${name}`)
+    return match[0]
+  }).join("\n")
+  const moves = []
+  const focused = []
+  const left = { activeWorkspace: { id: 1 }, lastIpcObject: {} }
+  const right = { activeWorkspace: { id: 2 }, lastIpcObject: { specialWorkspace: { id: -99 } } }
+  let screen = "right"
+  const root = {
+    resolveScreen: () => screen,
+    windowRefByAddress: (address) => ({ address, workspaceId: 4, workspaceName: "4" }),
+    hidePreview: () => { screen = "left" },
+    focusWindowAddress: (address) => focused.push(address),
+  }
+  const context = {
+    root,
+    DockModel: model,
+    Hyprland: {
+      focusedMonitor: left,
+      monitors: { values: [left, right] },
+      monitorFor: (name) => name === "right" ? right : left,
+      dispatch: (command) => moves.push(command),
+    },
+  }
+  vm.runInNewContext(functions + "\n" + names.map((name) => `root.${name} = ${name}`).join("\n"), context)
+  assert.deepEqual(Array.from(root.visibleWorkspaceIds()), [1, 2, -99])
+  root.activateWindow("0xbbb")
+  assert.deepEqual(moves, ['hl.dsp.window.move({ window = "address:0xbbb", workspace = "2", follow = false })'])
+  assert.deepEqual(focused, ["0xbbb"])
+  moves.length = 0
+  root.windowRefByAddress = (address) => ({ address, workspaceId: 2, workspaceName: "2" })
+  root.activateWindow("0xccc")
+  assert.deepEqual(moves, [])
+  assert.equal(focused.at(-1), "0xccc")
+})
+
+
+test("window focus dispatches only its validated address without changing cursor configuration", () => {
+  const source = fs.readFileSync("DockPanelBase.qml", "utf8")
+  const helper = source.match(/^  function focusWindowAddress\([^]*?\n  \}/m)
+  assert.ok(helper)
+  const commands = []
+  const context = { DockModel: model, Hyprland: { dispatch: (command) => commands.push(command) } }
+  vm.runInNewContext(helper[0], context)
+  context.focusWindowAddress("000AbC")
+  context.focusWindowAddress('0xabc"; bad()')
+  context.focusWindowAddress("")
+  assert.deepEqual(commands, ['hl.dsp.focus({ window = "address:0xabc" })'])
+  assert.doesNotMatch(source, /pendingFocusTarget|pendingCursorPosition|restoreCursorWarps|cursorCaptureProcess|focusNoWarpProcess|no_warps/)
 })

@@ -18,8 +18,8 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Hide: choose "Hide" in an app's menu (or right-click it with
   `"rightClick": "hide"`) to park all its windows on Hyprland's
   `special:minimized` workspace. Clicking the icon, a window preview or the app
-  in Alt+Tab brings them back to the focused monitor's workspace
-- Live window previews on hover, with cached thumbnail fallbacks
+  in Alt+Tab restores one selected window to the dock monitor's workspace
+- Live window previews on hover, with cached thumbnails captured from that exact window
 - Custom macOSicons, local PNG, and WebP icon overrides
 - Point-and-click icon picker: open any app's menu and choose "Get Info…" to
   change its icon from macOSicons, your own image, or a direct image URL — no
@@ -37,13 +37,14 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 
 ## Mouse controls
 
-- Left click an icon: focus the app, bring back its hidden windows, or launch
-  it.
+- Left click an icon: focus one displayed app window, restore one hidden window, or launch the app.
+- Click a preview to activate only that window. A displayed window keeps its monitor;
+  a window on an inactive or minimized workspace moves to the dock monitor.
 - Right or middle click an icon: open the app menu (Get Info, Pin, New Window,
   Manage Icons, Hide, and the dock's settings, see [Dock settings in the
   menu](#dock-settings-in-the-menu)).
 - With `"rightClick": "hide"` in `dock-settings.json`, right click a running
-  app to hide all its windows, and right click it again to bring them back
+  app to hide all its windows, and right click it again to restore one window
   once every window is hidden. Right click on an app that is not running
   still opens its menu, and middle click always does.
 - Right or middle click empty dock space: open the icon manager.
@@ -263,7 +264,7 @@ icon CLI. Timing is baked in.
 | `magnification` | number | `1.36` | `dock-settings.json` | Scale of the icon under the pointer, from 1.0 (no magnification) to 2.0. A number or numeric string is clamped to the range; anything else uses the default. Written only when it is not the default. |
 | `hoverEffect` | string | `"wave"` | `dock-settings.json` | How icons react to the pointer. `"wave"` is the macOS magnification: the hovered icon grows to `magnification`, its neighbors grow less and slide apart, and the dock lengthens. `"zoom"` grows only the hovered icon to `magnification`, in place and over its neighbors; no other icon moves and the dock keeps its length. `"none"` grows nothing, whatever `magnification` says. Any other value uses the default. Written only when it is not the default. |
 | `bounce` | bool | `true` | `dock-settings.json` | Bounce an app's icon when the app opens. Accepts `true`/`false` or the strings `"true"`/`"false"`; anything else uses the default. Written only when it is not the default. |
-| `rightClick` | string | `"menu"` | `dock-settings.json` | What right-clicking an app icon does. `"menu"` opens the app menu. `"hide"` hides every window of a running app, or brings them back when all of them are hidden; an app that is not running still opens its menu. Middle click opens the menu in both modes. Any other value uses the default. Written only when it is not the default. |
+| `rightClick` | string | `"menu"` | `dock-settings.json` | What right-clicking an app icon does. `"menu"` opens the app menu. `"hide"` hides every window of a running app, or restores one window when all of them are hidden; an app that is not running still opens its menu. Middle click opens the menu in both modes. Any other value uses the default. Written only when it is not the default. |
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
 | `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
 | custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
