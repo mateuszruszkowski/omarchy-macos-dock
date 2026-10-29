@@ -35,6 +35,23 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Tiling window adaptation: when auto-hide is off, it reserves its footprint
   as a Wayland exclusive zone, so tiled windows never overlap it
 
+## Runtime work and reduced motion
+
+Cached thumbnails still refresh when focus changes, including while the dock is
+hidden. Their intermediate PNG is uncompressed; the final cached PNG remains
+304×184, preserves transparency, and replaces the last successful image only
+when the exact-window capture and conversion both succeed. Live previews are
+unchanged.
+
+Trash status follows directory events, including removal and recreation of the
+trash directory. Opening the dock refreshes it too; a 60-second recovery check
+covers missed filesystem events. The status check uses shell builtins rather
+than spawning a pipeline of directory scanners.
+
+Visual timings follow Omarchy's reduced-motion setting. Turning animations off
+also stops active hover springs and launch bounces, without disabling wave/zoom
+magnification or changing pinning, drag, preview, or window actions.
+
 ## Mouse controls
 
 - Left click an icon: focus one displayed app window, restore one hidden window, or launch the app.

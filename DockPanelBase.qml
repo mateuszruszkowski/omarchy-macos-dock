@@ -129,8 +129,21 @@ Item {
   // read at startup set the initial state, so they apply without a slide.
   property real hideShift: (root.autoHide && root.autoHidden) ? root.bottomMargin + root.dockHeight - root.peekPx : 0
   Behavior on hideShift {
-    enabled: root.settingsLoaded
-    NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+    enabled: root.settingsLoaded && !Style.reduceMotion
+    NumberAnimation { duration: Style.duration(root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
+  }
+  Connections {
+    target: Style
+    function onReduceMotionChanged() {
+      if (!Style.reduceMotion) return
+      root.hideShift = Qt.binding(function() { return (root.autoHide && root.autoHidden) ? root.bottomMargin + root.dockHeight - root.peekPx : 0 })
+      dockSurface.width = Qt.binding(function() { return root.surfaceWidth })
+      dockSurface.height = Qt.binding(function() { return root.surfaceHeight })
+      dockSurface.opacity = Qt.binding(function() { return !root.enabled ? 0 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96) })
+      dockRow.width = Qt.binding(function() { return root.layoutWidth - 2 * root.metrics.sidePadding })
+      dockRow.rotation = Qt.binding(function() { return root.vertical ? -90 : 0 })
+      Qt.callLater(root.applyLayout)
+    }
   }
   property real surfaceWidth: root.vertical ? root.dockHeight : root.layoutWidth
   property real surfaceHeight: root.vertical ? root.layoutWidth : root.dockHeight
@@ -197,6 +210,7 @@ Item {
   property string downloadsPath: home + "/Downloads"
   property string trashFilesPath: home + "/.local/share/Trash/files"
   property bool trashFull: false
+  property bool trashCheckPending: false
 
   // Layout & drag state. The Repeater model (dockItems) is the stable identity
   // list of ids, replaced only when the id set changes; reorders go through
@@ -828,8 +842,29 @@ Item {
     trashRefreshTimer.restart()
   }
 
+  function trashStatusCommand() {
+    return ["bash", "-c", 'shopt -s nullglob dotglob; for entry in "$1"/*; do printf "full\\n"; exit 0; done; printf "empty\\n"', "dock-trash", root.trashFilesPath]
+  }
+
   function updateTrashStatus() {
-    if (!trashCheckProcess.running) trashCheckProcess.running = true
+    if (trashCheckProcess.running) root.trashCheckPending = true
+    else trashCheckProcess.running = true
+  }
+
+  function rearmTrashWatchers() {
+    // QFileSystemWatcher drops deleted paths. Reattach after either parent
+    // changes, including Trash being created for the first time.
+    trashParentWatcher.path = ""
+    trashParentWatcher.path = root.home + "/.local/share/Trash"
+    trashParentWatcher.reload()
+    trashWatcher.path = ""
+    trashWatcher.path = root.trashFilesPath
+    trashWatcher.reload()
+    trashRefreshTimer.restart()
+  }
+
+  onAutoHiddenChanged: {
+    if (!root.autoHidden) root.updateTrashStatus()
   }
 
   // ---- Alt+Tab app switcher -------------------------------------------------
@@ -1265,7 +1300,7 @@ Item {
     root.inFlightAddrs[info.address] = true
     var proc = captureProcess.createObject(root, {
       jobAddress: info.address,
-      jobBatch: "",
+      jobBatch: -1,
       command: ["bash", "-c", root.thumbnailCommand(info)]
     })
     proc.running = true
@@ -1276,8 +1311,8 @@ Item {
     var dir = Util.shellQuote(root.thumbnailDir)
     var target = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png")
     var tmp = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png.tmp")
-    return "mkdir -p " + dir
-      + "; grim -T " + Util.shellQuote(String(job.stableId)) + " - | magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
+    return "set -o pipefail; mkdir -p " + dir
+      + " && grim -T " + Util.shellQuote(String(job.stableId)) + " -l 0 - | magick - -resize 304x184^ -background none -gravity center -extent 304x184 png:" + tmp
       + " && mv " + tmp + " " + target
   }
 
@@ -1538,7 +1573,7 @@ Item {
     Process {
       id: self
       required property string jobAddress
-      required property string jobBatch
+      required property int jobBatch
       onExited: function(exitCode) {
         if (exitCode === 0) root.thumbCache[self.jobAddress] = true
         if (self.jobBatch === root.currentThumbBatch) {
@@ -1764,13 +1799,13 @@ Item {
       // glass pill instead of a brighter top. Removed the previous 0.10 bar
       // that made the top brighter than left/right/bottom.
 
-      Behavior on width {
-        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+      Behavior on width { enabled: !Style.reduceMotion;
+        NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
       }
-      Behavior on height {
-        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+      Behavior on height { enabled: !Style.reduceMotion;
+        NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
       }
-      Behavior on opacity { NumberAnimation { duration: 180 } }
+      Behavior on opacity { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(180) } }
 
       Item {
         id: dockRow
@@ -1783,11 +1818,11 @@ Item {
         // each wrapper counter-rotates +90° to keep icons upright.
         rotation: root.vertical ? -90 : 0
 
-        Behavior on width {
-          NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+        Behavior on width { enabled: !Style.reduceMotion;
+          NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
         }
-        Behavior on rotation {
-          NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+        Behavior on rotation { enabled: !Style.reduceMotion;
+          NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
         }
 
         Repeater {
@@ -1826,7 +1861,7 @@ Item {
             function cancelBounce() { dockItem.cancelLaunchBounce() }
 
             Behavior on x {
-              enabled: wrapper.animating
+              enabled: wrapper.animating && !Style.reduceMotion
               SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
             }
 
@@ -2020,22 +2055,29 @@ Item {
     }
   }
 
-  // Trash full/empty detection — poll the Trash files directory.
+  // Directory events do the normal refresh; a rare safety check recovers
+  // from lost watcher events without spawning scanners every five seconds.
   Process {
     id: trashCheckProcess
-    command: ["bash", "-c", "ls -A \"" + root.trashFilesPath + "\" 2>/dev/null | head -1 | grep -q . && echo full || echo empty"]
+    command: root.trashStatusCommand()
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var s = String(text || "").trim()
-        root.trashFull = (s === "full")
+        var status = String(text || "").trim()
+        if (status === "full" || status === "empty") root.trashFull = status === "full"
+      }
+    }
+    onExited: {
+      if (root.trashCheckPending) {
+        root.trashCheckPending = false
+        trashRefreshTimer.restart()
       }
     }
   }
 
   Timer {
     id: trashPollTimer
-    interval: 5000
+    interval: 60000
     running: true
     repeat: true
     onTriggered: root.updateTrashStatus()
@@ -2053,6 +2095,21 @@ Item {
     watchChanges: true
     printErrors: false
     onFileChanged: trashRefreshTimer.restart()
+  }
+
+  FileView {
+    id: trashParentWatcher
+    path: root.home + "/.local/share/Trash"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: root.rearmTrashWatchers()
+  }
+
+  FileView {
+    path: root.home + "/.local/share"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: root.rearmTrashWatchers()
   }
 
   // Persistence is written only after the settle animation finishes, matching
@@ -2206,9 +2263,25 @@ Item {
       width: root.iconSize * root.ghostScale + 16
       height: root.iconSize * root.ghostScale + 16
       opacity: root.ghostOpacity
-      Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-      Behavior on y { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+      Behavior on x {
+        enabled: !Style.reduceMotion
+        SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
+      }
+      Behavior on y {
+        enabled: !Style.reduceMotion
+        SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
+      }
+      Connections {
+        target: Style
+        function onReduceMotionChanged() {
+          if (Style.reduceMotion) {
+            ghostAnchor.x = Qt.binding(function() { return root.ghostX })
+            ghostAnchor.y = Qt.binding(function() { return root.ghostY })
+            ghostAnchor.opacity = Qt.binding(function() { return root.ghostOpacity })
+          }
+        }
+      }
+      Behavior on opacity { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
 
       Rectangle {
         anchors.centerIn: parent

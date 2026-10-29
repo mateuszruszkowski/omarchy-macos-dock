@@ -9,8 +9,7 @@ Item {
   required property var itemData
   required property int iconSize
   property string dockSide: "bottom"
-  // Targets driven by the panel's layout engine. Every change is animated so
-  // nothing ever teleports.
+  // Layout targets interpolate while motion is enabled and snap in reduced motion.
   property real targetScale: 1
   property real targetLift: 0
   property real targetOpacity: 1
@@ -45,7 +44,7 @@ Item {
   }
 
   Behavior on scale {
-    enabled: root.animationEnabled
+    enabled: root.animationEnabled && !Style.reduceMotion
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   scale: root.targetScale
@@ -56,7 +55,7 @@ Item {
   }
 
   Behavior on y {
-    enabled: root.animationEnabled
+    enabled: root.animationEnabled && !Style.reduceMotion
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   y: -root.targetLift
@@ -67,22 +66,22 @@ Item {
   anchors.verticalCenterOffset: root.bounceOffset
 
   Behavior on opacity {
-    enabled: root.animationEnabled
-    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+    enabled: root.animationEnabled && !Style.reduceMotion
+    NumberAnimation { duration: Style.duration(150); easing.type: Easing.OutCubic }
   }
   opacity: root.targetOpacity
 
-  // One-shot launch bounce. Runs to completion once started; never driven by
-  // the running state, so a mid-animation state refresh cannot restart it.
+  // One-shot launch bounce, cancelled when reduced motion is enabled. It is
+  // independent of running-state refreshes so they cannot restart it.
   // Always finishes at exactly 0 so hover lift positioning is never corrupted.
   SequentialAnimation {
     id: launchBounceAnim
-    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight; duration: 180; easing.type: Easing.OutCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight; to: 0; duration: 170; easing.type: Easing.InCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.55; duration: 150; easing.type: Easing.OutCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.55; to: 0; duration: 150; easing.type: Easing.InCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.25; duration: 140; easing.type: Easing.OutCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.25; to: 0; duration: 160; easing.type: Easing.InOutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight; duration: Style.duration(180); easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight; to: 0; duration: Style.duration(170); easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.55; duration: Style.duration(150); easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.55; to: 0; duration: Style.duration(150); easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.25; duration: Style.duration(140); easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.25; to: 0; duration: Style.duration(160); easing.type: Easing.InOutCubic }
     onFinished: {
       root.bounceOffset = 0
       root.launchBounceFinished()
@@ -90,7 +89,7 @@ Item {
   }
 
   function playLaunchBounce() {
-    if (!root.animationEnabled || root.isDragging) return false
+    if (!root.animationEnabled || Style.reduceMotion || root.isDragging) return false
     if (launchBounceAnim.running) return false
     launchBounceAnim.restart()
     return true
@@ -99,6 +98,21 @@ Item {
   function cancelLaunchBounce() {
     launchBounceAnim.stop()
     root.bounceOffset = 0
+  }
+
+  Connections {
+    target: Style
+    function onReduceMotionChanged() {
+      if (Style.reduceMotion) {
+        root.scale = Qt.binding(function() { return root.targetScale })
+        root.y = Qt.binding(function() { return -root.targetLift })
+        root.opacity = Qt.binding(function() { return root.targetOpacity })
+      }
+      if (Style.reduceMotion && launchBounceAnim.running) {
+        root.cancelLaunchBounce()
+        root.launchBounceFinished()
+      }
+    }
   }
 
   Image {

@@ -39,6 +39,16 @@ Item {
     // Mirror the dock surface's screen-space geometry. The surface follows
     // numeric x/y/width/height on the base so both layers can never disagree.
     Rectangle {
+      id: materialSurface
+      Connections {
+        target: Style
+        function onReduceMotionChanged() {
+          if (!Style.reduceMotion) return
+          materialSurface.width = Qt.binding(function() { return dock.surfaceWidth })
+          materialSurface.height = Qt.binding(function() { return dock.surfaceHeight })
+          materialSurface.opacity = Qt.binding(function() { return dock.menuOpen || dock.pickerOpen || dock.dockHovered ? 1 : 0.92 })
+        }
+      }
       x: dock.surfaceX
       y: dock.surfaceY
       width: dock.surfaceWidth
@@ -49,9 +59,9 @@ Item {
       border.width: 0
       opacity: dock.menuOpen || dock.pickerOpen || dock.dockHovered ? 1 : 0.92
 
-      Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-      Behavior on height { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-      Behavior on opacity { NumberAnimation { duration: 160 } }
+      Behavior on width { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic } }
+      Behavior on height { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic } }
+      Behavior on opacity { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(160) } }
     }
   }
 }

@@ -61,6 +61,15 @@ PanelWindow {
     }
   }
 
+  Connections {
+    target: Style
+    function onReduceMotionChanged() {
+      if (!Style.reduceMotion) return
+      previewRow.opacity = Qt.binding(function() { return root.panelActive ? 1 : 0 })
+      previewRow.scale = Qt.binding(function() { return root.panelActive ? 1 : 0.92 })
+    }
+  }
+
   onWindowListChanged: Qt.callLater(root.rebuild)
 
   // Do not wait for a screenshot process to finish before showing the panel.
@@ -96,8 +105,8 @@ PanelWindow {
     opacity: root.panelActive ? 1 : 0
     scale: root.panelActive ? 1 : 0.92
 
-    Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-    Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+    Behavior on opacity { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
+    Behavior on scale { enabled: !Style.reduceMotion; NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
 
     Row {
       id: row

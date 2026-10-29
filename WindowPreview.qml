@@ -63,10 +63,19 @@ Item {
     border.color: root.active ? Util.alpha(Color.accent, 0.85) : Util.alpha(Color.foreground, 0.15)
     border.width: root.active ? 2 : 1
 
-    Behavior on border.color { ColorAnimation { duration: 150 } }
+    Behavior on border.color { enabled: !Style.reduceMotion; ColorAnimation { duration: Style.duration(150) } }
     Behavior on scale {
-      enabled: root.animationEnabled
+      enabled: root.animationEnabled && !Style.reduceMotion
       SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
+    }
+    Connections {
+      target: Style
+      function onReduceMotionChanged() {
+        if (Style.reduceMotion) {
+          card.scale = Qt.binding(function() { return cardHover.hovered ? 1.05 : 1 })
+          card.border.color = Qt.binding(function() { return root.active ? Util.alpha(Color.accent, 0.85) : Util.alpha(Color.foreground, 0.15) })
+        }
+      }
     }
 
     // Direct compositor capture is the primary source. ScreencopyView keeps
