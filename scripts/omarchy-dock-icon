@@ -181,6 +181,7 @@ set_icon() {
     cp -- "$3" "$temporary"
   else
     source="$input"
+    image_url=""
     if [[ "$input" =~ ^https://s3-new\.macosicons\.com/ ]]; then
       image_url="$input"
     else
