@@ -68,6 +68,22 @@ HOME="$work/home" "$helper" set code --file "$work/icon.png"
 test -f "$work/home/.config/omarchy/icons/code.png" || { echo "icon file missing"; exit 1; }
 grep -q '"code"' "$work/home/.config/omarchy/dock-icons.json" || { echo "mapping missing"; exit 1; }
 
+no_leftovers() {
+  local found
+  found="$(find "$work/home/.config/omarchy/icons" -mindepth 1 -maxdepth 1 -name ".$1.*")"
+  [[ -z "$found" ]] || { echo "temporary files left after $2:"; echo "$found"; exit 1; }
+}
+
+echo "== set leaves no temporary files behind"
+no_leftovers code "a successful set"
+
+echo "== failed set leaves no temporary files behind"
+printf 'not an image' > "$work/broken.png"
+if HOME="$work/home" "$helper" set broken --file "$work/broken.png" 2>/dev/null; then
+  echo "invalid image was accepted"; exit 1
+fi
+no_leftovers broken "a failed set"
+
 echo "== list reports the mapped icon"
 cat > "$work/home/.config/omarchy/dock-pinned-macos.json" <<'EOF'
 {"version":1,"pinned":["code"],"order":["code"]}
