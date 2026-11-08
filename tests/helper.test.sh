@@ -10,18 +10,30 @@ trap 'rm -rf "$work"' EXIT
 
 mkdir -p "$work/home"
 
-# Fake curl: records the POST body and serves canned search JSON.
+# Fake curl: records the POST body and serves canned search JSON. Downloads
+# (-o) get the canned page, or the test icon for .png URLs.
 cat > "$work/fake-curl" <<'EOF'
 #!/usr/bin/env bash
 body=""
 max_size=""
+out=""
+url=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d) body="$2"; shift 2 ;;
     --max-filesize) max_size="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    https://*) url="$1"; shift ;;
     *) shift ;;
   esac
 done
+if [[ -n "$out" ]]; then
+  case "$url" in
+    *.png) cp "$WORK/icon.png" "$out" ;;
+    *) cp "$WORK/page.html" "$out" ;;
+  esac
+  exit 0
+fi
 printf '%s' "$body" > "$WORK/call.log"
 printf '%s' "$max_size" > "$WORK/max-size.log"
 cat "$WORK/search.json"
@@ -67,6 +79,30 @@ if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi
 HOME="$work/home" "$helper" set code --file "$work/icon.png"
 test -f "$work/home/.config/omarchy/icons/code.png" || { echo "icon file missing"; exit 1; }
 grep -q '"code"' "$work/home/.config/omarchy/dock-icons.json" || { echo "mapping missing"; exit 1; }
+
+no_leftovers() {
+  local found
+  found="$(find "$work/home/.config/omarchy/icons" -mindepth 1 -maxdepth 1 -name ".$1.*")"
+  [[ -z "$found" ]] || { echo "temporary files left after $2:"; echo "$found"; exit 1; }
+}
+
+echo "== set leaves no temporary files behind"
+no_leftovers code "a successful set"
+
+echo "== failed set leaves no temporary files behind"
+printf 'not an image' > "$work/broken.png"
+if HOME="$work/home" "$helper" set broken --file "$work/broken.png" 2>/dev/null; then
+  echo "invalid image was accepted"; exit 1
+fi
+no_leftovers broken "a failed set"
+
+echo "== set from a macosicons page maps the linked image"
+printf '<img src="https://s3-new.macosicons.com/macosicons/parse/Code_abc_iOS.png">' > "$work/page.html"
+mkdir -p "$work/tmp"
+HOME="$work/home" TMPDIR="$work/tmp" "$helper" set code https://macosicons.com/icon/abc
+grep -q 'Code_abc_iOS.png' "$work/home/.config/omarchy/dock-icons.json" || { echo "page image not mapped"; exit 1; }
+no_leftovers code "a page set"
+[[ -z "$(ls -A "$work/tmp")" ]] || { echo "temporary files left in TMPDIR:"; ls -A "$work/tmp"; exit 1; }
 
 echo "== list reports the mapped icon"
 cat > "$work/home/.config/omarchy/dock-pinned-macos.json" <<'EOF'

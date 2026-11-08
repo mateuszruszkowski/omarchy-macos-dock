@@ -162,12 +162,17 @@ PY
 }
 
 set_icon() {
-  local app_id input source image_url temporary filename
+  local app_id input source image_url work temporary page_file rounded filename
   app_id="$(canonical_id "$1")"
   input="$2"
   mkdir -p "$icon_dir"
-  temporary="$(mktemp "$icon_dir/.${app_id}.XXXXXX")"
-  trap 'rm -f "$temporary"' RETURN
+  # Every intermediate file lives in one private directory. An EXIT trap also
+  # runs when die or set -e ends the script; a RETURN trap does not.
+  work="$(mktemp -d "$icon_dir/.${app_id}.XXXXXX")"
+  trap "rm -rf -- $(printf '%q' "$work")" EXIT
+  temporary="$work/source"
+  page_file="$work/page.html"
+  rounded="$work/rounded.png"
 
   if [[ "$input" == "--file" ]]; then
     [[ -f "$3" ]] || die "image file not found: $3"
@@ -176,6 +181,7 @@ set_icon() {
     cp -- "$3" "$temporary"
   else
     source="$input"
+    image_url=""
     if [[ "$input" =~ ^https://s3-new\.macosicons\.com/ ]]; then
       image_url="$input"
     else
@@ -189,9 +195,6 @@ set_icon() {
         source="https://macosicons.com/icon/$input"
       fi
       if [[ -z "$image_url" ]]; then
-        local page_file
-        page_file="$(mktemp)"
-        trap 'rm -f "$temporary" "$page_file"' RETURN
         "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 30 \
           --proto '=https' --proto-redir '=https' --max-filesize "$max_page_size" \
           -o "$page_file" "$source"
@@ -212,14 +215,10 @@ set_icon() {
     *) die "downloaded file is not a valid PNG or WebP image" ;;
   esac
 
-  local rounded
-  rounded="$(mktemp "$icon_dir/.${app_id}.rounded.XXXXXX.png")"
-  trap 'rm -f "$temporary" "$rounded"' RETURN
   round_icon "$temporary" "$rounded"
   filename="$app_id.png"
   mv -f -- "$rounded" "$icon_dir/$filename"
   write_mapping "$app_id" "$filename" "$source" "$image_url"
-  trap - RETURN
   printf 'Set custom icon for %s\n' "$app_id"
 }
 
