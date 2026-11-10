@@ -113,10 +113,68 @@ test("toggles and reorders pins", () => {
   assert.deepEqual(Array.from(model.reorderPinned(["a", "b", "c"], 0, 2)), ["b", "c", "a"])
 })
 
-test("builds pinned and running items without a separator", () => {
+test("builds pinned and running items with Downloads and Trash after a separator", () => {
   const items = model.buildDockItems(["a"], [{ id: "a", name: "A" }, { id: "b", name: "B" }], ["a", "b"])
   assert.equal(items[0].running, true)
+  assert.equal(items[0].pinned, true)
   assert.equal(items[1].id, "b")
+  assert.equal(items[1].pinned, false)
+  assert.equal(items[1].running, true)
+  assert.deepEqual(Array.from(items.map(item => item.id)), ["a", "b", "__separator__", "downloads", "trash"])
+  assert.equal(items[2].separator, true)
+  assert.equal(items[3].icon, "folder-download")
+  assert.equal(items[3].special, true)
+  assert.equal(items[3].pinned, false)
+  assert.equal(items[4].icon, "user-trash")
+  assert.equal(items[4].running, false)
+})
+
+test("special section stays after apps and honors showDownloads/showTrash", () => {
+  const full = model.appendSpecialItems(model.buildFlow(["a", "downloads", "b"], ["x"], "b", 1), { trashFull: false })
+  assert.deepEqual(Array.from(full.map(item => item.id)), ["a", "__phantom__", "x", "__separator__", "downloads", "trash"])
+  assert.equal(full[3].separator, true)
+  assert.equal(full[4].icon, "folder-download")
+  assert.equal(full[5].icon, "user-trash")
+
+  const fullTrash = model.buildDockItems(["pin"], [], ["run"], { showDownloads: true, showTrash: true, trashFull: true })
+  assert.deepEqual(Array.from(fullTrash.map(item => item.id)), ["pin", "run", "__separator__", "downloads", "trash"])
+  assert.equal(fullTrash[fullTrash.length - 1].icon, "user-trash-full")
+
+  const trashOnly = model.buildDockItems(["a"], [], ["b"], { showDownloads: false, showTrash: true, trashFull: true })
+  assert.deepEqual(Array.from(trashOnly.map(item => item.id)), ["a", "b", "__separator__", "trash"])
+  assert.equal(trashOnly[3].icon, "user-trash-full")
+
+  const downloadsOnly = model.appendSpecialItems([{ id: "a" }], { showDownloads: true, showTrash: false })
+  assert.deepEqual(Array.from(downloadsOnly.map(item => item.id)), ["a", "__separator__", "downloads"])
+
+  const appsOnly = model.buildDockItems(["downloads", "a"], [], ["trash", "b"], { showDownloads: false, showTrash: false })
+  assert.deepEqual(Array.from(appsOnly.map(item => item.id)), ["a", "b"])
+  assert.equal(appsOnly.some(item => item.separator), false)
+})
+
+test("special ids are stripped from the reorderable dock", () => {
+  assert.equal(model.isSpecialId("downloads"), true)
+  assert.equal(model.isSpecialId("trash.desktop"), true)
+  assert.equal(model.isSpecialId("__separator__"), true)
+  assert.equal(model.isSpecialId("firefox"), false)
+  assert.deepEqual(Array.from(model.stripSpecialIds(["firefox", "downloads", "trash", "__separator__", "files"])), ["firefox", "files"])
+})
+
+test("separator keeps its own width and does not magnify", () => {
+  const opts = model.LAYOUT_OPTS
+  const flow = model.appendSpecialItems([{ id: "a" }, { id: "b" }], { showDownloads: true, showTrash: true })
+  const rest = model.computeLayout(flow, -1, opts)
+  const separatorX = opts.slotWidth * 2 + opts.spacing * 2
+  assert.equal(rest.placements.__separator__.x, separatorX)
+  assert.equal(rest.placements.downloads.x, separatorX + opts.separatorWidth + opts.spacing)
+  assert.equal(rest.placements.trash.x, rest.placements.downloads.x + opts.slotWidth + opts.spacing)
+  assert.ok(rest.placements.trash.x > rest.placements.b.x, "specials sit after the apps")
+
+  const center = rest.placements.__separator__.x + opts.separatorWidth / 2
+  const mag = model.computeLayout(flow, center, opts)
+  assert.equal(mag.placements.__separator__.scale, 1)
+  assert.equal(mag.placements.__separator__.lift, 0)
+  assert.equal(mag.placements.a.scale >= 1, true)
 })
 
 test("write guard ignores matching content", () => {
@@ -447,23 +505,45 @@ test("settings parse and serialize dockSide", () => {
   assert.equal(model.serializeSettings({ autoHide: true, dockSide: "weird" }).includes('"dockSide": "bottom"'), true)
 })
 
-test("settings parse and serialize screen", () => {
-  assert.equal(model.parseSettings('{"screen":"DP-2"}', {}).screen, "DP-2")
-  assert.equal(model.parseSettings('{"screen":"  DP-2 "}', {}).screen, "DP-2")
-  assert.equal(model.parseSettings('{"screen":"focused"}', {}).screen, "focused")
-  assert.equal(model.parseSettings('{"screen":" Focused "}', {}).screen, "focused")
-  assert.equal(model.parseSettings('{"screen":42}', {}).screen, "")
-  assert.equal(model.parseSettings('{}', {}).screen, "")
-  assert.equal(model.parseSettings('', {}).screen, "")
-  assert.equal(model.parseSettings('not json', { screen: "DP-3" }).screen, "DP-3")
-  const s = model.serializeSettings({ autoHide: true, dockSide: "bottom", screen: "DP-2" })
-  assert.equal(JSON.parse(s).screen, "DP-2")
-  assert.equal(model.parseSettings(s, {}).screen, "DP-2")
-  assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
+test("the earlier screen key is read as the screen mode and saved back as screenMode", () => {
+  const mode = (text, fallback) => model.parseSettings(text, fallback || {}).screenMode
+  assert.equal(mode('{"screen":"DP-2"}'), "DP-2")
+  assert.equal(mode('{"screen":"  DP-2 "}'), "DP-2")
+  assert.equal(mode('{"screen":" Focused "}'), "focused")
+  assert.equal(mode('{"screenMode":"FOCUSED"}'), "focused")
+  assert.equal(mode('{"screen":""}'), "all")
+  assert.equal(mode('{"screen":42}'), "all")
+  assert.equal(mode('{"screen":"DP-2","screenMode":"all"}'), "all")
+  assert.equal(mode("not json", { screenMode: "DP-3" }), "DP-3")
+  assert.equal(mode('{"screenMode":42}', { screenMode: "DP-3" }), "DP-3")
+  const written = JSON.parse(model.serializeSettings(model.parseSettings('{"screen":"focused"}')))
+  assert.equal(written.screenMode, "focused")
+  assert.equal("screen" in written, false)
 })
 
-const DEFAULTS = { autoHide: true, dockSide: "bottom", screen: "", iconSize: 54, magnification: 1.36, bounce: true, rightClick: "menu", hoverEffect: "wave" }
-const CUSTOM = { autoHide: false, dockSide: "right", screen: "DP-2", iconSize: 80, magnification: 1.75, bounce: false, rightClick: "hide", hoverEffect: "zoom" }
+test("a focused dock resolves to the output it follows, or the first one", () => {
+  const screens = [{ name: "eDP-1" }, { name: "DP-1" }]
+  const resolve = (...args) => Array.from(model.resolveScreenNames(screens, ...args))
+  assert.deepEqual(resolve("focused", "DP-1"), ["DP-1"])
+  assert.deepEqual(resolve("focused", "HDMI-A-1"), ["eDP-1"])
+  assert.deepEqual(resolve("focused", ""), ["eDP-1"])
+  assert.deepEqual(resolve("all", "DP-1"), ["eDP-1", "DP-1"])
+  assert.deepEqual(resolve("DP-1", "eDP-1"), ["DP-1"])
+})
+
+test("the shell config turns a plugin on from plugins[] or the bar, unless it is disabled", () => {
+  const enables = (config) => model.shellConfigEnables(JSON.stringify(config), "rosakodu.dock")
+  assert.equal(enables({ plugins: [{ id: "macos.dock" }] }), false)
+  assert.equal(enables({ plugins: [{ id: "macos.dock" }, { id: "rosakodu.dock" }] }), true)
+  assert.equal(enables({ bar: { layout: { right: [{ id: "omarchy.tray" }, { id: "rosakodu.dock" }] } } }), true)
+  assert.equal(enables({ plugins: [{ id: "rosakodu.dock" }], disabledPlugins: ["rosakodu.dock"] }), false)
+  assert.equal(enables({ disabledPlugins: ["omarchy.dock"], theme: { id: "rosakodu.dock" } }), false)
+  for (const text of ["", "not json", "[]", "null", "42"])
+    assert.equal(model.shellConfigEnables(text, "rosakodu.dock"), false, JSON.stringify(text))
+})
+
+const DEFAULTS = { autoHide: true, dockSide: "bottom", screenMode: "all", showDownloads: true, showTrash: true, iconSize: 54, magnification: 1.36, bounce: true, rightClick: "menu", hoverEffect: "wave" }
+const CUSTOM = { autoHide: false, dockSide: "right", screenMode: "DP-2", showDownloads: false, showTrash: false, iconSize: 80, magnification: 1.75, bounce: false, rightClick: "hide", hoverEffect: "zoom" }
 
 test("settings default to the stock dock", () => {
   assert.deepEqual(plain(model.DEFAULT_SETTINGS), DEFAULTS)
@@ -554,10 +634,11 @@ test("broken settings fall back to the normalized fallback", () => {
 })
 
 test("settings write only the keys that differ from the defaults", () => {
-  assert.deepEqual(JSON.parse(model.serializeSettings(DEFAULTS)), { version: 1, autoHide: true, dockSide: "bottom" })
+  const always = { version: 1, autoHide: true, dockSide: "bottom", screenMode: "all", showDownloads: true, showTrash: true }
+  assert.deepEqual(JSON.parse(model.serializeSettings(DEFAULTS)), always)
   for (const [key, value] of [["iconSize", 72], ["magnification", 1.5], ["bounce", false], ["rightClick", "hide"], ["hoverEffect", "none"]]) {
     const written = JSON.parse(model.serializeSettings({ ...DEFAULTS, [key]: value }))
-    assert.deepEqual(written, { version: 1, autoHide: true, dockSide: "bottom", [key]: value }, key)
+    assert.deepEqual(written, { ...always, [key]: value }, key)
   }
 })
 
@@ -574,7 +655,8 @@ test("rewriting the file for one setting keeps every other custom setting", () =
 
 test("a menu setting action goes through the same validation as the file", () => {
   const apply = (action) => plain(model.applySettingAction(DEFAULTS, action))
-  for (const [key, value] of [["autoHide", false], ["dockSide", "left"], ["screen", "DP-6"], ["screen", "focused"],
+  for (const [key, value] of [["autoHide", false], ["dockSide", "left"], ["screenMode", "DP-6"], ["screenMode", "focused"],
+    ["showDownloads", false], ["showTrash", false],
     ["iconSize", 58], ["magnification", 1.48], ["bounce", false], ["rightClick", "hide"], ["hoverEffect", "zoom"]]) {
     assert.deepEqual(apply(model.settingAction(key, value)), { ...DEFAULTS, [key]: value }, `${key}=${value}`)
   }
@@ -617,11 +699,12 @@ test("menu steppers show the icon size in px and magnification 1 as Off", () => 
   assert.equal(model.settingText("magnification", 2), "2×")
 })
 
-test("the menu shows an unset or disconnected screen as the first output, where the dock is", () => {
+test("the menu shows a primary or disconnected screen as the first output, where the dock is", () => {
   const names = ["eDP-1", "DP-6"]
-  const shown = (screen) => model.shownSetting({ ...DEFAULTS, screen }, "screen", names)
-  assert.equal(shown(""), "eDP-1")
+  const shown = (screenMode) => model.shownSetting({ ...DEFAULTS, screenMode }, "screenMode", names)
+  assert.equal(shown("primary"), "eDP-1")
   assert.equal(shown("HDMI-A-1"), "eDP-1")
+  assert.equal(shown("all"), "all")
   assert.equal(shown("DP-6"), "DP-6")
   assert.equal(shown("focused"), "focused")
   assert.equal(model.shownSetting({ ...DEFAULTS, iconSize: 70 }, "iconSize", names), 70)
@@ -646,6 +729,30 @@ test("pickScreenName chooses the dock output", () => {
   // no outputs
   assert.equal(model.pickScreenName([], "DP-2", "DP-2", "DP-2", false), "")
   assert.equal(model.pickScreenName(undefined, "", "", "", false), "")
+})
+
+test("settings default showDownloads and showTrash to true", () => {
+  const defaults = model.parseSettings("{}", {})
+  assert.equal(defaults.showDownloads, true)
+  assert.equal(defaults.showTrash, true)
+  assert.equal(model.parseSettings("", { autoHide: true }).showDownloads, true)
+  assert.equal(model.parseSettings('{"showDownloads":false,"showTrash":false}', {}).showDownloads, false)
+  assert.equal(model.parseSettings('{"showDownloads":false,"showTrash":false}', {}).showTrash, false)
+  assert.equal(model.parseSettings('{"showDownloads":"true","showTrash":"false"}', {}).showDownloads, true)
+  assert.equal(model.parseSettings('{"showDownloads":"true","showTrash":"false"}', {}).showTrash, false)
+  const raw = model.serializeSettings({ autoHide: true, dockSide: "left", showDownloads: false, showTrash: true })
+  const parsed = JSON.parse(raw)
+  assert.equal(parsed.showDownloads, false)
+  assert.equal(parsed.showTrash, true)
+  assert.equal(parsed.dockSide, "left")
+  assert.equal(model.parseSettings(raw, { showDownloads: true, showTrash: false }).showDownloads, false)
+  assert.equal(model.parseSettings(raw, { showDownloads: true, showTrash: false }).showTrash, true)
+  assert.equal(model.serializeSettings({ autoHide: true }).includes('"showDownloads": true'), true)
+  assert.equal(model.serializeSettings({ autoHide: true }).includes('"showTrash": true'), true)
+  // Existing files without the keys stay on.
+  assert.equal(model.parseSettings('{"autoHide":false,"dockSide":"right"}', {}).showDownloads, true)
+  assert.equal(model.parseSettings('{"autoHide":false,"dockSide":"right"}', {}).showTrash, true)
+  assert.equal(model.parseSettings('{"autoHide":false,"dockSide":"right"}', {}).autoHide, false)
 })
 
 test("settings write guard ignores matching content", () => {
@@ -909,7 +1016,7 @@ test("window actions reject every action outside the close and kill allowlist", 
 
 test("preview routing captures the dock monitor before closing and moves only its selected window", () => {
   const source = fs.readFileSync("DockPanelBase.qml", "utf8")
-  const names = ["visibleWorkspaceIds", "dockWorkspaceId", "activateWindows", "activateWindow"]
+  const names = ["visibleWorkspaceIds", "workspaceIdOn", "dockWorkspaceId", "activateWindows", "activateWindow"]
   const functions = names.map((name) => {
     const match = source.match(new RegExp("^  function " + name + "\\([^]*?\\n  \\}", "m"))
     assert.ok(match, `QML function ${name}`)
@@ -921,7 +1028,7 @@ test("preview routing captures the dock monitor before closing and moves only it
   const right = { activeWorkspace: { id: 2 }, lastIpcObject: { specialWorkspace: { id: -99 } } }
   let screen = "right"
   const root = {
-    resolveScreen: () => screen,
+    get activeScreen() { return screen },
     windowRefByAddress: (address) => ({ address, workspaceId: 4, workspaceName: "4" }),
     hidePreview: () => { screen = "left" },
     focusWindowAddress: (address) => focused.push(address),
@@ -961,4 +1068,67 @@ test("window focus dispatches only its validated address without changing cursor
   context.focusWindowAddress("")
   assert.deepEqual(commands, ['hl.dsp.focus({ window = "address:0xabc" })'])
   assert.doesNotMatch(source, /pendingFocusTarget|pendingCursorPosition|restoreCursorWarps|cursorCaptureProcess|focusNoWarpProcess|no_warps/)
+})
+
+test("parses the screen mode, defaulting to every output", () => {
+  assert.equal(model.parseSettings("{}", {}).screenMode, "all")
+  assert.equal(model.parseSettings("", {}).screenMode, "all")
+  assert.equal(model.parseSettings("not json", {}).screenMode, "all")
+  assert.equal(model.parseSettings('{"screenMode":"primary"}', {}).screenMode, "primary")
+  assert.equal(model.parseSettings('{"screenMode":"DP-1"}', {}).screenMode, "DP-1")
+  assert.equal(model.parseSettings('{"screenMode":"  DP-1  "}', {}).screenMode, "DP-1")
+  assert.equal(model.parseSettings('{"screenMode":"PRIMARY"}', {}).screenMode, "primary")
+  assert.equal(model.parseSettings('{"screenMode":""}', {}).screenMode, "all")
+  assert.equal(model.parseSettings('{"screenMode":42}', {}).screenMode, "all")
+})
+
+test("serializes the screen mode and round-trips it", () => {
+  assert.equal(
+    model.serializeSettings({ autoHide: true, screenMode: "primary" }).includes('"screenMode": "primary"'),
+    true,
+  )
+  assert.equal(
+    model.serializeSettings({ autoHide: true }).includes('"screenMode": "all"'),
+    true,
+  )
+  const s = model.serializeSettings({ autoHide: false, dockSide: "left", screenMode: "DP-2" })
+  assert.equal(model.parseSettings(s, {}).screenMode, "DP-2")
+  assert.equal(model.parseSettings(s, {}).dockSide, "left")
+  assert.equal(model.parseSettings(s, {}).autoHide, false)
+})
+
+test("round-trips every persisted setting together", () => {
+  const settings = {
+    autoHide: false,
+    dockSide: "left",
+    screenMode: "DP-2",
+    showDownloads: false,
+    showTrash: true,
+  }
+  const parsed = model.parseSettings(model.serializeSettings(settings), {})
+  assert.equal(parsed.autoHide, false)
+  assert.equal(parsed.dockSide, "left")
+  assert.equal(parsed.screenMode, "DP-2")
+  assert.equal(parsed.showDownloads, false)
+  assert.equal(parsed.showTrash, true)
+})
+
+test("resolves the screen mode to output names", () => {
+  const screens = [{ name: "eDP-1" }, { name: "DP-1" }]
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "all")), ["eDP-1", "DP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "")), ["eDP-1", "DP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "primary")), ["eDP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "DP-1")), ["DP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "DP-9")), ["eDP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames([], "all")), [])
+})
+
+test("computes the dock surface position on each output", () => {
+  // surfaceFor lives in another VM realm: compare plain JSON, like the other tests.
+  const at = (...args) => JSON.parse(JSON.stringify(model.surfaceFor(...args)))
+  assert.deepEqual(at("bottom", 1920, 1200, 600, 78, 4, 0), { x: 660, y: 1118 })
+  assert.deepEqual(at("right", 1920, 1200, 78, 600, 4, 0), { x: 1838, y: 300 })
+  assert.deepEqual(at("left", 1920, 1200, 78, 600, 4, 0), { x: 4, y: 300 })
+  assert.deepEqual(at("bottom", 2560, 1440, 600, 78, 4, 0), { x: 980, y: 1358 })
+  assert.deepEqual(at("bottom", 1920, 1200, 600, 78, 4, 82), { x: 660, y: 1200 })
 })
