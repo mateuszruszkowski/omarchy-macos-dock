@@ -20,6 +20,11 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
   `special:minimized` workspace. Clicking the icon, a window preview or the app
   in Alt+Tab restores one selected window to the dock monitor's workspace
 - Live window previews on hover, with cached thumbnails captured from that exact window
+- Downloads and Trash fixed at the end of the dock (bottom edge of a side
+  dock), after a separator. They are not reorderable pins. Downloads opens
+  the XDG download directory; Trash opens `trash:///` and switches between
+  the empty and full trash icons. Toggle either in the menu or with
+  `showDownloads` / `showTrash` in `dock-settings.json` (both default to on)
 - Custom macOSicons, local PNG, and WebP icon overrides
 - Point-and-click icon picker: open any app's menu and choose "Get Info…" to
   change its icon from macOSicons, your own image, or a direct image URL — no
@@ -34,6 +39,9 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
   persists in `~/.config/omarchy/dock-settings.json`
 - Tiling window adaptation: when auto-hide is off, it reserves its footprint
   as a Wayland exclusive zone, so tiled windows never overlap it
+- One dock per connected output by default, each centred and sized on its own
+  screen; `screenMode` narrows it to the focused monitor, the primary output
+  or a single named one
 
 ## Runtime work and reduced motion
 
@@ -230,8 +238,8 @@ Behavior:
 - `Enter` activates the selection, `Escape` cancels without changing focus,
   arrow keys move the selection, and the mouse can hover to select or click
   to activate.
-- The switcher opens on the dock's primary screen and cycles applications
-  only — pinned-but-closed applications are never included.
+- The switcher opens on the focused monitor when it carries a dock, otherwise
+  on the dock's output, and cycles applications only — pinned-but-closed applications are never included.
 
 ### Changing the keybind
 
@@ -276,7 +284,9 @@ icon CLI. Timing is baked in.
 |---|---|---|---|---|
 | `autoHide` | bool | `true` | `dock-settings.json` | Glide off-screen when idle and reveal from the bottom edge. When off, the dock reserves its footprint as an exclusive zone. |
 | `dockSide` | string | `"bottom"` | `dock-settings.json` | Screen edge the dock sits on: `"bottom"`, `"left"` or `"right"`. |
-| `screen` | string | `""` | `dock-settings.json` | Monitor the dock (and the Alt+Tab switcher) appears on: an output name from `hyprctl monitors` such as `"DP-2"`, or `"focused"` to follow the focused monitor. Empty, or an output that is not connected, uses the first screen. |
+| `screenMode` | string | `"all"` | `dock-settings.json` | Which outputs carry a dock: `"all"` (every connected output), `"focused"` (only the focused monitor; the dock follows focus, but stays put while a menu, preview or drag is open), `"primary"` (the first screen only) or an output name from `hyprctl monitors` such as `"DP-1"`. A named output that is not connected falls back to the first screen. A file written before the dock could span outputs has this setting as `screen` (an output name or `"focused"`); it is still read, and saved back as `screenMode`. |
+| `showDownloads` | bool | `true` | `dock-settings.json` | Show the Downloads folder after the separator on every dock. Opens the XDG download directory. Accepts `true`/`false` or the strings `"true"`/`"false"`; anything else uses the default. |
+| `showTrash` | bool | `true` | `dock-settings.json` | Show Trash after Downloads on every dock. Opens `trash:///` and uses the full icon when Trash is not empty. Accepts the same values as `showDownloads`. |
 | `iconSize` | int | `54` | `dock-settings.json` | Icon size in pixels, from 32 to 96. The dock height, slots, spacing, padding, corner radius, hover reach and launch bounce all scale with it. A number or numeric string is rounded, then clamped to the range; anything else uses the default. Written only when it is not the default. |
 | `magnification` | number | `1.36` | `dock-settings.json` | Scale of the icon under the pointer, from 1.0 (no magnification) to 2.0. A number or numeric string is clamped to the range; anything else uses the default. Written only when it is not the default. |
 | `hoverEffect` | string | `"wave"` | `dock-settings.json` | How icons react to the pointer. `"wave"` is the macOS magnification: the hovered icon grows to `magnification`, its neighbors grow less and slide apart, and the dock lengthens. `"zoom"` grows only the hovered icon to `magnification`, in place and over its neighbors; no other icon moves and the dock keeps its length. `"none"` grows nothing, whatever `magnification` says. Any other value uses the default. Written only when it is not the default. |
@@ -297,12 +307,14 @@ the file, and is saved to `dock-settings.json`. The menu stays open:
 |---|---|
 | Hiding | On / Off (`autoHide`) |
 | Position | Bottom / Left / Right (`dockSide`) |
-| Screen | Focused, then one button per connected output (`screen`). With `screen` unset or naming an output that is not connected, the output the dock falls back to is shown chosen. A new output takes effect once the menu closes, so the menu does not jump to the other monitor under the pointer |
+| Screen | All, Focused, then one button per connected output (`screenMode`). With `"primary"` or an output that is not connected, the output the dock falls back to is shown chosen. In Focused, a new output takes effect once the menu closes, so the menu does not jump to the other monitor under the pointer |
 | Right click | Menu / Hide (`rightClick`) |
 | Icon size | − and + step 4 px from 54 (58, 62, … up to 96; 50, 46, … down to 32) (`iconSize`) |
 | Magnification | − and + step 0.12 from 1.36 (1.48, 1.6, … up to 2; 1.24, 1.12, then Off at 1) (`magnification`) |
 | Hover | Wave / Zoom / None (`hoverEffect`) |
 | Bounce | On / Off (`bounce`) |
+| Downloads | On / Off (`showDownloads`) |
+| Trash | On / Off (`showTrash`) |
 
 A stepper's button is dimmed at the end of its range. A value set in the file
 between two steps moves to the nearest step in the direction pressed.
@@ -319,6 +331,8 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 | `toggleAutoHide` | — | Toggle auto-hide (persisted) |
 | `setAutoHide` | `true`/`false` | Set auto-hide explicitly (persisted) |
 | `getAutoHide` | — | Print current auto-hide state |
+| `setScreenMode` | `"all"` / `"focused"` / `"primary"` / `"DP-1"` | Set which outputs carry a dock (persisted) |
+| `getScreenMode` | — | Print the current screen mode |
 | `altTabNext` | — | Next application in the switcher |
 | `altTabPrev` | — | Previous application in the switcher |
 | `altTabCancel` | — | Dismiss the switcher without changing focus |
@@ -345,18 +359,24 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 {
   "version": 1,
   "autoHide": true,
-  "dockSide": "bottom"
+  "dockSide": "bottom",
+  "screenMode": "all",
+  "showDownloads": true,
+  "showTrash": true
 }
 ```
 
 A dock with larger icons, a stronger zoom of only the hovered icon and no
-launch bounce:
+launch bounce, only on the focused monitor:
 
 ```json
 {
   "version": 1,
   "autoHide": true,
   "dockSide": "bottom",
+  "screenMode": "focused",
+  "showDownloads": true,
+  "showTrash": true,
   "iconSize": 72,
   "magnification": 1.6,
   "bounce": false,
@@ -386,7 +406,14 @@ For reference, the companion files with all defaults applied:
 
 ```bash
 ./tests/run.sh
-qmllint DockPanel.qml DockItem.qml DockMenu.qml
+qmllint DockPanel.qml DockPanelBase.qml DockItem.qml DockMenu.qml
 ```
 
-The dock is intended for a single output. By default it uses the first configured Quickshell screen; set `screen` in `dock-settings.json` to put it on a specific monitor.
+The dock fills every connected output by default, with one layer surface per
+screen placed from that screen's own dimensions. `screenMode` narrows it to one
+output (`"focused"`, `"primary"`, or an output name). The dock model stays
+single: pins, order, hover magnification and auto-hide are shared, so all copies
+show the same dock and reveal together. What follows the screen the user acts on
+is the menu, the icon picker, the window preview, the drag ghost and the
+tooltip. The App Switcher opens on the focused monitor when it carries a dock,
+and otherwise on the dock's output.

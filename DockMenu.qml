@@ -25,12 +25,14 @@ PanelWindow {
   readonly property var settingRows: [
     { label: "Hiding", key: "autoHide", options: [{ label: "On", value: true }, { label: "Off", value: false }] },
     { label: "Position", key: "dockSide", options: [{ label: "Bottom", value: "bottom" }, { label: "Left", value: "left" }, { label: "Right", value: "right" }] },
-    { label: "Screen", key: "screen", options: [{ label: "Focused", value: "focused" }].concat(root.screenNames.map(function(name) { return { label: name, value: name } })) },
+    { label: "Screen", key: "screenMode", options: [{ label: "All", value: "all" }, { label: "Focused", value: "focused" }].concat(root.screenNames.map(function(name) { return { label: name, value: name } })) },
     { label: "Right click", key: "rightClick", options: [{ label: "Menu", value: "menu" }, { label: "Hide", value: "hide" }] },
     { label: "Icon size", key: "iconSize", stepper: true },
     { label: "Magnification", key: "magnification", stepper: true },
     { label: "Hover", key: "hoverEffect", options: [{ label: "Wave", value: "wave" }, { label: "Zoom", value: "zoom" }, { label: "None", value: "none" }] },
-    { label: "Bounce", key: "bounce", options: [{ label: "On", value: true }, { label: "Off", value: false }] }
+    { label: "Bounce", key: "bounce", options: [{ label: "On", value: true }, { label: "Off", value: false }] },
+    { label: "Downloads", key: "showDownloads", options: [{ label: "On", value: true }, { label: "Off", value: false }] },
+    { label: "Trash", key: "showTrash", options: [{ label: "On", value: true }, { label: "Off", value: false }] }
     // Minimize effect (Genie / Scale / None) goes here once hiding an app
     // animates its windows.
   ]
@@ -85,6 +87,9 @@ PanelWindow {
             visible: status === Image.Ready
           }
           Text {
+            // Falls back to the window's appId when no desktop entry matched,
+            // so this string is client-controlled: force plain text.
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: root.itemData && root.itemData.name ? String(root.itemData.name).charAt(0).toUpperCase() : "•"
             color: Color.foreground
@@ -101,6 +106,10 @@ PanelWindow {
           anchors.verticalCenter: parent.verticalCenter
           spacing: 3
           Text {
+            // The app name can come from an unmatched, client-controlled
+            // window appId. AutoText would parse "<img src=...>" and could
+            // fetch remote images from the host shell, so keep it literal.
+            textFormat: Text.PlainText
             text: root.itemData && root.itemData.name ? root.itemData.name : "Application"
             color: Color.foreground
             font.family: Style.font.family
@@ -108,6 +117,7 @@ PanelWindow {
             font.bold: true
           }
           Text {
+            textFormat: Text.PlainText
             text: root.itemData && root.itemData.running ? "Running application" : "Pinned application"
             color: Util.alpha(Color.foreground, 0.52)
             font.family: Style.font.family
@@ -122,7 +132,7 @@ PanelWindow {
           radius: 16
           anchors.verticalCenter: parent.verticalCenter
           color: closeMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : "transparent"
-          Text { anchors.centerIn: parent; text: "×"; color: Util.alpha(Color.foreground, 0.65); font.pixelSize: 22 }
+          Text { anchors.centerIn: parent; textFormat: Text.PlainText; text: "×"; color: Util.alpha(Color.foreground, 0.65); font.pixelSize: 22 }
           MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; onClicked: root.opened = false }
         }
       }
@@ -130,6 +140,7 @@ PanelWindow {
       Rectangle { width: parent.width; height: 1; color: Util.alpha(Color.foreground, 0.10) }
 
       Text {
+        textFormat: Text.PlainText
         text: "Application actions"
         color: Color.foreground
         font.family: Style.font.family
@@ -168,12 +179,14 @@ PanelWindow {
               anchors.centerIn: parent
               spacing: 8
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modelData.glyph
                 color: actionMouse.containsMouse ? Color.accent : Color.foreground
                 font.pixelSize: 24
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 // Bound here, not in the model, so Pin/Unpin flips without
                 // rebuilding the cards under the click that flipped it.
@@ -183,6 +196,7 @@ PanelWindow {
                 font.pixelSize: Style.font.body
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modelData.detail
                 color: Util.alpha(Color.foreground, 0.45)
@@ -206,6 +220,7 @@ PanelWindow {
       Rectangle { width: parent.width; height: 1; color: Util.alpha(Color.foreground, 0.10) }
 
       Text {
+        textFormat: Text.PlainText
         text: "Dock"
         color: Color.foreground
         font.family: Style.font.family
@@ -231,6 +246,7 @@ PanelWindow {
 
             Text {
               id: settingLabel
+              textFormat: Text.PlainText
               width: 96
               anchors.verticalCenter: parent.verticalCenter
               text: settingRow.modelData.label
@@ -244,11 +260,16 @@ PanelWindow {
               visible: !settingRow.modelData.stepper
               anchors { left: settingLabel.right; right: parent.right; top: parent.top; bottom: parent.bottom }
               spacing: 6
+              // Each button's share of the row follows its label's length, so
+              // "All" does not take the room "Focused" needs. Short labels
+              // weigh the same, which keeps On and Off equal.
+              function labelWeight(label) { return Math.max(4, label.length) + 2 }
+              readonly property real totalWeight: (settingRow.modelData.options || []).reduce(function(sum, option) { return sum + labelWeight(option.label) }, 0)
               Repeater {
                 model: settingRow.modelData.options || []
                 delegate: UtilityButton {
                   required property var modelData
-                  width: (settingOptions.width - settingOptions.spacing * (settingRow.modelData.options.length - 1)) / settingRow.modelData.options.length
+                  width: (settingOptions.width - settingOptions.spacing * (settingRow.modelData.options.length - 1)) * settingOptions.labelWeight(modelData.label) / settingOptions.totalWeight
                   label: modelData.label
                   action: DockModel.settingAction(settingRow.modelData.key, modelData.value)
                   selected: settingRow.shown === modelData.value
@@ -267,6 +288,7 @@ PanelWindow {
                 action: settingRow.modelData.stepper ? DockModel.stepAction(root.settings, settingRow.modelData.key, -1) : ""
               }
               Text {
+                textFormat: Text.PlainText
                 width: settingStepper.width - 2 * 34 - 2 * settingStepper.spacing
                 height: parent.height
                 horizontalAlignment: Text.AlignHCenter
@@ -304,6 +326,7 @@ PanelWindow {
     border.color: selected ? Util.alpha(Color.accent, 0.60) : "transparent"
     border.width: 1
     Text {
+      textFormat: Text.PlainText
       anchors.centerIn: parent
       width: parent.width - 8
       horizontalAlignment: Text.AlignHCenter

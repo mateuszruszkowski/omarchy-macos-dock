@@ -2,6 +2,13 @@
 
 var DEFAULT_PINNED = []
 
+// Fixed macOS-style section. These ids are not apps: they never join the
+// pinned list or the reorderable dock order, and the separator always sits
+// after every pinned and running icon.
+var SEPARATOR_ID = "__separator__"
+var DOWNLOADS_ID = "downloads"
+var TRASH_ID = "trash"
+
 var lastWrittenHash = null
 
 function normalizeId(value) {
@@ -380,6 +387,57 @@ function desktopIdForWindow(rawId, entries) {
     return raw
 }
 
+function isSpecialId(id) {
+    var value = normalizeId(id)
+    return value === SEPARATOR_ID || value === DOWNLOADS_ID || value === TRASH_ID
+}
+
+function stripSpecialIds(ids) {
+    var result = []
+    ;(ids || []).forEach(function(id) {
+        var value = normalizeId(id)
+        if (!value || isSpecialId(value) || result.indexOf(value) !== -1) return
+        result.push(value)
+    })
+    return result
+}
+
+// Downloads and Trash, preceded by the divider. Omitted entirely when both
+// toggles are off so the dock does not keep an empty separator. `trashFull`
+// only swaps the trash icon; the item stays in the same slot.
+function specialSection(options) {
+    var opts = options || {}
+    var showDownloads = opts.showDownloads !== false
+    var showTrash = opts.showTrash !== false
+    if (!showDownloads && !showTrash) return []
+    var items = [{
+        id: SEPARATOR_ID, separator: true, name: "", icon: "",
+        pinned: false, running: false, special: true
+    }]
+    if (showDownloads) items.push({
+        id: DOWNLOADS_ID, name: "Downloads", icon: "folder-download",
+        pinned: false, running: false, special: true
+    })
+    if (showTrash) items.push({
+        id: TRASH_ID, name: "Trash", icon: opts.trashFull ? "user-trash-full" : "user-trash",
+        pinned: false, running: false, special: true
+    })
+    return items
+}
+
+// Appends the fixed section after the app flow. Special ids already present
+// (a stale pin, a drag) are dropped so they cannot sit among apps; the
+// phantom placeholder is left where buildFlow put it.
+function appendSpecialItems(flow, options) {
+    var next = []
+    ;(flow || []).forEach(function(item) {
+        if (!item) return
+        if (!item.phantom && isSpecialId(item.id)) return
+        next.push(item)
+    })
+    return next.concat(specialSection(options))
+}
+
 function entryFor(id, entries) {
     var value = normalizeId(id)
     var list = entries || []
@@ -394,10 +452,11 @@ function entryFor(id, entries) {
     return { id: value, name: pretty || value, icon: "application-x-executable" }
 }
 
-function buildDockItems(pinned, entries, runningIds) {
+function buildDockItems(pinned, entries, runningIds, options) {
     var result = []
-    var running = runningIds || []
-    ;(pinned || []).forEach(function(id) {
+    var pinnedIds = stripSpecialIds(pinned)
+    var running = stripSpecialIds(runningIds || [])
+    pinnedIds.forEach(function(id) {
         var entry = entryFor(id, entries)
         result.push({ id: normalizeId(id), name: entry.name || entry.displayName || id,
             icon: entry.icon || entry.iconName || "", pinned: true,
@@ -407,7 +466,7 @@ function buildDockItems(pinned, entries, runningIds) {
     var unpinned = []
     running.forEach(function(id) {
         var normalized = normalizeId(id)
-        if (!isPinned(pinned, normalized) && unpinned.indexOf(normalized) === -1)
+        if (!isPinned(pinnedIds, normalized) && unpinned.indexOf(normalized) === -1)
             unpinned.push(normalized)
     })
     unpinned.forEach(function(id) {
@@ -415,7 +474,7 @@ function buildDockItems(pinned, entries, runningIds) {
         result.push({ id: id, name: entry.name || entry.displayName || id,
             icon: entry.icon || entry.iconName || "", pinned: false, running: true })
     })
-    return result
+    return appendSpecialItems(result, options)
 }
 
 function hashContent(value) {
@@ -440,7 +499,9 @@ var lastSettingsHash = null
 var DEFAULT_SETTINGS = {
     autoHide: true,
     dockSide: "bottom",
-    screen: "",
+    screenMode: "all",
+    showDownloads: true,
+    showTrash: true,
     iconSize: 54,
     magnification: 1.36,
     bounce: true,
@@ -460,16 +521,21 @@ function normalizeSide(side) {
     return "bottom"
 }
 
-// Output name ("DP-2"), "focused", or "" for the default (first screen).
-function normalizeScreen(value) {
-    if (typeof value !== "string") return ""
-    var name = value.trim()
-    return name.toLowerCase() === "focused" ? "focused" : name
+// Which outputs the dock occupies: "all" (every connected output, the
+// default), "focused" (the focused monitor only, following focus), "primary"
+// (the first screen only), or an output name from `hyprctl monitors` such as
+// "DP-1".
+function normalizeScreenMode(value) {
+    if (typeof value !== "string") return "all"
+    var mode = value.trim()
+    if (!mode) return "all"
+    var keyword = mode.toLowerCase()
+    return keyword === "all" || keyword === "primary" || keyword === "focused" ? keyword : mode
 }
 
-// Choose the output name the dock should live on.
+// The output a "focused" dock lives on.
 //   names       connected output names, in Quickshell order
-//   want        the `screen` setting: a name, "focused", or ""
+//   want        "focused", or an output name
 //   focusedName name of the focused monitor ("" if unknown)
 //   currentName output the dock is on now ("" if none)
 //   frozen      true while a menu/preview/drag is open: keep the dock where
@@ -481,6 +547,13 @@ function pickScreenName(names, want, focusedName, currentName, frozen) {
     var target = want === "focused" ? focusedName : want
     if (target && list.indexOf(target) >= 0) return target
     return list.length > 0 ? list[0] : ""
+}
+
+// true or false for a boolean or its "true"/"false" string, else undefined.
+function flagSetting(value) {
+    if (typeof value === "boolean") return value
+    if (value === "true" || value === "false") return value === "true"
+    return undefined
 }
 
 // A finite number or a non-empty numeric string as a number; NaN otherwise.
@@ -508,13 +581,18 @@ function overlaySettings(base, source) {
     if (typeof source.autoHide === "boolean") out.autoHide = source.autoHide
     else if (typeof source.autoHide === "string") out.autoHide = source.autoHide === "true"
     if (source.dockSide !== undefined) out.dockSide = normalizeSide(source.dockSide)
-    if (source.screen !== undefined) out.screen = normalizeScreen(source.screen)
+    if (typeof source.screenMode === "string") out.screenMode = normalizeScreenMode(source.screenMode)
+    // `screen` is the key this setting had before the dock could span outputs:
+    // an output name or "focused".
+    else if (typeof source.screen === "string" && source.screen.trim()) out.screenMode = normalizeScreenMode(source.screen)
     var size = settingNumber(source.iconSize)
     if (isFinite(size)) out.iconSize = clamp(Math.round(size), ICON_SIZE_RANGE)
     var magnification = settingNumber(source.magnification)
     if (isFinite(magnification)) out.magnification = clamp(magnification, MAGNIFICATION_RANGE)
-    if (typeof source.bounce === "boolean") out.bounce = source.bounce
-    else if (source.bounce === "true" || source.bounce === "false") out.bounce = source.bounce === "true"
+    ;["bounce", "showDownloads", "showTrash"].forEach(function(key) {
+        var flag = flagSetting(source[key])
+        if (flag !== undefined) out[key] = flag
+    })
     var rightClick = choiceSetting(source.rightClick, RIGHT_CLICK_MODES)
     if (rightClick) out.rightClick = rightClick
     var hoverEffect = choiceSetting(source.hoverEffect, HOVER_EFFECTS)
@@ -539,14 +617,56 @@ function parseSettings(text, fallback) {
 function serializeSettings(settings) {
     var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
     var side = normalizeSide(settings && settings.dockSide)
-    var out = { version: 1, autoHide: value, dockSide: side }
-    var screen = normalizeScreen(settings && settings.screen)
-    if (screen) out.screen = screen
+    var out = {
+        version: 1,
+        autoHide: value,
+        dockSide: side,
+        screenMode: normalizeScreenMode(settings && settings.screenMode),
+        showDownloads: flagSetting(settings && settings.showDownloads) !== false,
+        showTrash: flagSetting(settings && settings.showTrash) !== false
+    }
     // Written only when chosen, so an unset key follows the default.
     ;["iconSize", "magnification", "bounce", "rightClick", "hoverEffect"].forEach(function(key) {
         if (settings && settings[key] !== DEFAULT_SETTINGS[key]) out[key] = settings[key]
     })
     return JSON.stringify(out, null, 2) + "\n"
+}
+
+// Resolve a screen mode against a live screen list (Quickshell.screens in QML,
+// plain arrays in tests) to the output names the dock should occupy.
+// `focusName` is the output a "focused" dock is on (see pickScreenName). A
+// named output that is not connected falls back to the first screen.
+function resolveScreenNames(screens, mode, focusName) {
+    var list = screens || []
+    var names = []
+    for (var i = 0; i < list.length; i++) {
+        var screen = list[i]
+        names.push(screen && screen.name ? String(screen.name) : "")
+    }
+    if (names.length === 0) return []
+    var want = normalizeScreenMode(mode)
+    if (want === "all") return names
+    if (want === "focused") want = focusName
+    return [names.indexOf(want) >= 0 ? want : names[0]]
+}
+
+// Dock surface top-left corner on one output, in that output's own
+// coordinates. Every per-screen surface (dock, glass layer, preview anchor)
+// derives its position from this one function, so no output can drift from
+// another and a wrong screen size shows up in the tests.
+function surfaceFor(side, winWidth, winHeight, surfaceWidth, surfaceHeight, bottomMargin, hideShift) {
+    var edge = normalizeSide(side)
+    var width = Number(winWidth) || 0
+    var height = Number(winHeight) || 0
+    var w = Number(surfaceWidth) || 0
+    var h = Number(surfaceHeight) || 0
+    var margin = Number(bottomMargin) || 0
+    var shift = Number(hideShift) || 0
+    var x = (width - w) / 2
+    if (edge === "right") x = width - w - margin + shift
+    else if (edge === "left") x = margin - shift
+    var y = edge === "bottom" ? height - h - margin + shift : (height - h) / 2
+    return { x: x, y: y }
 }
 
 function shouldReprocessSettings(content) {
@@ -556,6 +676,24 @@ function shouldReprocessSettings(content) {
 function markSettingsWritten(content) { lastSettingsHash = hashContent(content) }
 
 function resetSettingsGuard() { lastSettingsHash = null }
+
+// Whether the shell's config (shell.json) turns a third-party plugin on: an
+// entry with its id in plugins[] or anywhere in the bar, unless
+// disabledPlugins[] names it. A plugin's own registry view only answers for
+// itself, so this is how one plugin learns about another.
+function shellConfigEnables(text, id) {
+    var config = null
+    try { config = JSON.parse(String(text || "")) } catch (error) {}
+    if (!config || typeof config !== "object" || Array.isArray(config)) return false
+    if (Array.isArray(config.disabledPlugins) && config.disabledPlugins.indexOf(id) >= 0) return false
+    function holds(node) {
+        if (!node || typeof node !== "object") return false
+        if (!Array.isArray(node) && node.id === id) return true
+        for (var key in node) if (holds(node[key])) return true
+        return false
+    }
+    return holds(config.plugins) || holds(config.bar)
+}
 
 // ---- Dock settings in the app menu ----------------------------------------
 // A menu control is an action "key=value", applied through the same
@@ -602,11 +740,11 @@ function settingText(key, value) {
     return value === 1 ? "Off" : value + "×"
 }
 
-// The value the menu shows as chosen. An unset or disconnected screen shows
-// as the first output, which is where the dock is.
+// The value the menu shows as chosen. "primary" or a disconnected screen
+// shows as the first output, which is where the dock is.
 function shownSetting(settings, key, screenNames) {
     var value = settings[key]
-    if (key !== "screen" || value === "focused" || (screenNames || []).indexOf(value) >= 0) return value
+    if (key !== "screenMode" || value === "all" || value === "focused" || (screenNames || []).indexOf(value) >= 0) return value
     return (screenNames || [])[0] || ""
 }
 
@@ -768,6 +906,9 @@ function iconClickAction(button, windows, rightClick) {
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         DEFAULT_PINNED: DEFAULT_PINNED,
+        SEPARATOR_ID: SEPARATOR_ID,
+        DOWNLOADS_ID: DOWNLOADS_ID,
+        TRASH_ID: TRASH_ID,
         LAYOUT_OPTS: LAYOUT_OPTS,
         normalizeId: normalizeId,
         mergeAppEntries: mergeAppEntries,
@@ -791,6 +932,10 @@ if (typeof module !== "undefined" && module.exports) {
         isWebAppClass: isWebAppClass,
         desktopIdForWindow: desktopIdForWindow,
         entryFor: entryFor,
+        isSpecialId: isSpecialId,
+        stripSpecialIds: stripSpecialIds,
+        specialSection: specialSection,
+        appendSpecialItems: appendSpecialItems,
         buildDockItems: buildDockItems,
         hashContent: hashContent,
         shouldReprocess: shouldReprocess,
@@ -800,7 +945,9 @@ if (typeof module !== "undefined" && module.exports) {
         parseSettings: parseSettings,
         serializeSettings: serializeSettings,
         normalizeSide: normalizeSide,
-        normalizeScreen: normalizeScreen,
+        normalizeScreenMode: normalizeScreenMode,
+        resolveScreenNames: resolveScreenNames,
+        surfaceFor: surfaceFor,
         pickScreenName: pickScreenName,
         dockMetrics: dockMetrics,
         settingAction: settingAction,
@@ -808,6 +955,7 @@ if (typeof module !== "undefined" && module.exports) {
         stepAction: stepAction,
         settingText: settingText,
         shownSetting: shownSetting,
+        shellConfigEnables: shellConfigEnables,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,
